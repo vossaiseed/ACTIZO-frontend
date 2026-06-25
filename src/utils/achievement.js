@@ -18,6 +18,8 @@ export const ACHIEVEMENT_STYLES = {
     hex: '#f43f5e', // recharts fill
     chip: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-300',
     dot: 'bg-rose-500',
+    solid: 'bg-rose-500', // solid fill (icon chips)
+    card: 'border-rose-200 bg-rose-50 dark:border-rose-500/25 dark:bg-rose-500/10', // full-card tint
   },
   met: {
     key: 'met',
@@ -28,6 +30,8 @@ export const ACHIEVEMENT_STYLES = {
     hex: '#10b981',
     chip: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300',
     dot: 'bg-emerald-500',
+    solid: 'bg-emerald-500',
+    card: 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10',
   },
   exceeded: {
     key: 'exceeded',
@@ -38,6 +42,8 @@ export const ACHIEVEMENT_STYLES = {
     hex: '#3b82f6',
     chip: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-300',
     dot: 'bg-blue-500',
+    solid: 'bg-blue-500',
+    card: 'border-blue-200 bg-blue-50 dark:border-blue-500/25 dark:bg-blue-500/10',
   },
 }
 

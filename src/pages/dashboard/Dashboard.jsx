@@ -139,14 +139,6 @@ function SectionHeader({ icon: Icon, title, subtitle, action }) {
 /* Branch performance card (target vs achievement)                     */
 /* ------------------------------------------------------------------ */
 
-const BRANCH_ACCENTS = {
-  blue: { bg: 'bg-blue-50/60 dark:bg-blue-500/5', border: 'border-blue-200/70 dark:border-blue-500/20', icon: 'bg-blue-500', bar: 'sky' },
-  emerald: { bg: 'bg-emerald-50/60 dark:bg-emerald-500/5', border: 'border-emerald-200/70 dark:border-emerald-500/20', icon: 'bg-emerald-500', bar: 'emerald' },
-  violet: { bg: 'bg-violet-50/60 dark:bg-violet-500/5', border: 'border-violet-200/70 dark:border-violet-500/20', icon: 'bg-violet-500', bar: 'violet' },
-  amber: { bg: 'bg-amber-50/60 dark:bg-amber-500/5', border: 'border-amber-200/70 dark:border-amber-500/20', icon: 'bg-amber-500', bar: 'amber' },
-  rose: { bg: 'bg-rose-50/60 dark:bg-rose-500/5', border: 'border-rose-200/70 dark:border-rose-500/20', icon: 'bg-rose-500', bar: 'rose' },
-}
-
 function BranchStat({ label, value }) {
   return (
     <div>
@@ -157,25 +149,26 @@ function BranchStat({ label, value }) {
 }
 
 function BranchPerfCard({ card }) {
-  const a = BRANCH_ACCENTS[card.accent] || BRANCH_ACCENTS.blue
-  // Achievement color: below=red, met=green, exceeded=blue
+  // Full-card achievement color: below=red, met=green (100%), exceeded=blue (>100%).
   const ach = achievementStyleFromPct(card.achievementPct)
-  const pctColor = ach.text
 
   return (
     <motion.div
       whileHover={{ y: -3 }}
       transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-      className={cn('rounded-2xl border p-5 transition-shadow hover:shadow-card', a.bg, a.border)}
+      className={cn('rounded-2xl border p-5 transition-shadow hover:shadow-card', ach.card)}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white shadow-soft', a.icon)}>
+          <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white shadow-soft', ach.solid)}>
             <FiHome className="h-[18px] w-[18px]" />
           </span>
           <h3 className="truncate font-display text-base font-bold text-ink dark:text-slate-100">{card.name}</h3>
         </div>
-        <span className={cn('shrink-0 text-sm font-bold tabular-nums', pctColor)}>{card.achievementPct}%</span>
+        <div className="shrink-0 text-right">
+          <span className={cn('block text-base font-bold tabular-nums', ach.text)}>{card.achievementPct}%</span>
+          <span className={cn('block text-[10px] font-semibold uppercase tracking-wide', ach.text)}>{ach.label}</span>
+        </div>
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
@@ -187,7 +180,7 @@ function BranchPerfCard({ card }) {
 
       <ProgressBar value={card.achievementPct} max={100} color={ach.bar} size="md" className="mt-4" />
 
-      <div className="mt-3 border-t border-line/70 pt-3 text-sm text-ink-soft dark:border-slate-700/60 dark:text-slate-400">
+      <div className="mt-3 border-t border-current/10 pt-3 text-sm text-ink-soft dark:text-slate-400">
         Revenue:{' '}
         <span className="font-semibold text-ink dark:text-slate-200">{formatCurrency(card.revenue)}</span>
       </div>
