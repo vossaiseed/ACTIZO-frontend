@@ -26,7 +26,7 @@ const OFFSET = {
 /**
  * Hover/focus tooltip with a small dark bubble.
  */
-const Tooltip = ({ content, side = 'top', className, children }) => {
+const Tooltip = ({ content, side = 'top', className, wrapperClassName, children }) => {
   const [open, setOpen] = useState(false)
   const id = useId()
 
@@ -36,13 +36,15 @@ const Tooltip = ({ content, side = 'top', className, children }) => {
 
   return (
     <span
-      className="relative inline-flex"
+      className={cn('relative inline-flex', wrapperClassName)}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
     >
-      <span aria-describedby={open ? id : undefined}>{children}</span>
+      <span className={cn(wrapperClassName && 'flex w-full')} aria-describedby={open ? id : undefined}>
+        {children}
+      </span>
 
       <AnimatePresence>
         {open && (

@@ -56,7 +56,7 @@ function NavItem({ item, collapsed }) {
       className={({ isActive }) =>
         cn(
           'nav-item group/navitem relative',
-          collapsed && 'justify-center px-0',
+          collapsed && 'w-full justify-center px-0',
           isActive && 'nav-item-active',
         )
       }
@@ -84,7 +84,7 @@ function NavItem({ item, collapsed }) {
 
   if (collapsed) {
     return (
-      <Tooltip content={item.label} side="right">
+      <Tooltip content={item.label} side="right" wrapperClassName="w-full">
         {link}
       </Tooltip>
     )
@@ -171,7 +171,7 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="shrink-0 space-y-3 border-t border-line px-3 py-4 dark:border-slate-800">
         {/* Collapse toggle */}
-        <Tooltip content={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side="right">
+        <Tooltip content={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side="right" wrapperClassName="w-full">
           <button
             type="button"
             onClick={() => dispatch(toggleSidebar())}
