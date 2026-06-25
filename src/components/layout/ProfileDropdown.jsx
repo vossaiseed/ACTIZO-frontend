@@ -99,7 +99,7 @@ export default function ProfileDropdown() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.97 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute right-0 z-50 mt-2 w-64 origin-top-right overflow-hidden rounded-2xl glass p-1.5 shadow-card-hover"
+            className="absolute right-0 z-50 mt-2 w-64 origin-top-right overflow-hidden rounded-2xl border border-line bg-white p-1.5 shadow-card-hover dark:border-slate-700 dark:bg-slate-900"
             role="menu"
           >
             {/* User header */}

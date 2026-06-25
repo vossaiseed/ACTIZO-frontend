@@ -96,7 +96,7 @@ export default function NotificationCenter() {
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
               'absolute right-0 z-50 mt-2 w-[360px] max-w-[calc(100vw-2rem)] origin-top-right overflow-hidden rounded-2xl',
-              'glass shadow-card-hover',
+              'border border-line bg-white shadow-card-hover dark:border-slate-700 dark:bg-slate-900',
             )}
             role="menu"
           >
