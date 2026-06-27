@@ -187,7 +187,8 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
         ) : (
           <>
             <Select label="Branch" options={branchOptions} error={errors.branch?.message} {...register('branch', { required: 'Select a branch' })} />
-            <Select label="Sales Staff" options={staffOpts} {...register('staff')} />
+            {/* Required so every sale is attributed to a staff member → incentive can be credited. */}
+            <Select label="Sales Staff" options={staffOpts} error={errors.staff?.message} {...register('staff', { required: 'Select the staff member who made this sale' })} />
           </>
         )}
         <Select label="Product Category" options={categories.map((c) => ({ value: c, label: c }))} {...register('category')} />
