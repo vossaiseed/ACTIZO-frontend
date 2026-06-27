@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   FiBarChart2,
@@ -12,15 +12,11 @@ import {
   FiActivity,
   FiDownload,
   FiFileText,
-  FiCalendar,
   FiFilter,
   FiUserCheck,
-  FiUserPlus,
   FiCheckCircle,
   FiPercent,
   FiShoppingBag,
-  FiZap,
-  FiUser,
 } from 'react-icons/fi'
 
 import PageHeader from '@/components/common/PageHeader'
@@ -45,43 +41,16 @@ import { formatCurrency, formatNumber, formatPercent, formatDate } from '@/utils
 import { exportData } from '@/utils/export'
 import { achievementStyleFromPct } from '@/utils/achievement'
 import { CHART_COLORS } from '@/constants'
-
-/* ---- data modules ---- */
-import {
-  leads,
-  leadCountsByStatus,
-  LEAD_STATUSES,
-} from '@/data/leads'
-import {
-  sales,
-  totalSales,
-  totalRevenue,
-  monthlyRevenue,
-  avgOrderValue,
-  revenueTrend,
-  staffSales,
-} from '@/data/sales'
-import { branches, branchOptions } from '@/data/branches'
-import { staff, topPerformers } from '@/data/staff'
-import {
-  generalTargets,
-  specialTargets,
-  targetSummary,
-} from '@/data/targets'
-import {
-  incentives,
-  totalIncentives,
-  highestIncentive,
-  topPerformer,
-  incentiveTrend,
-} from '@/data/incentives'
-import { financeKpis, monthlyOverview } from '@/data/finance'
+import { reportsApi } from '@/services/crm'
 
 /* ------------------------------------------------------------------ */
 /* Static filter option sets                                          */
 /* ------------------------------------------------------------------ */
 
-const BRANCH_FILTER_OPTIONS = [{ value: 'All', label: 'All Branches' }, ...branchOptions]
+// The reports endpoint takes no filter params, so the filter row is a purely
+// presentational scope picker. Branch labels are intentionally not sourced from
+// any mock metric module — only the "all" sentinel is offered.
+const BRANCH_FILTER_OPTIONS = [{ value: 'All', label: 'All Branches' }]
 
 const RANGE_OPTIONS = [
   { value: '30', label: 'Last 30 days' },
@@ -100,6 +69,323 @@ const REPORT_TABS = [
   { key: 'target', label: 'Target', icon: <FiTarget /> },
   { key: 'incentive', label: 'Incentive', icon: <FiAward /> },
 ]
+
+/* ------------------------------------------------------------------ */
+/* Per-tab table column definitions (mapped onto backend row shapes)  */
+/* ------------------------------------------------------------------ */
+
+const REPORT_META = {
+  lead: {
+    name: 'actizo-lead-report',
+    rowKey: (r) => r.refCode,
+    columns: [
+      { key: 'refCode', header: 'Lead ID', label: 'Lead ID' },
+      { key: 'name', header: 'Name', label: 'Name' },
+      { key: 'source', header: 'Source', label: 'Source' },
+      { key: 'branchName', header: 'Branch', label: 'Branch' },
+      { key: 'staffName', header: 'Owner', label: 'Owner' },
+      { key: 'priority', header: 'Priority', label: 'Priority' },
+      {
+        key: 'status',
+        header: 'Status',
+        label: 'Status',
+        render: (r) => <StatusBadge status={r.status} withDot />,
+      },
+      {
+        key: 'value',
+        header: 'Value',
+        label: 'Value (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatCurrency(r.value || 0, { compact: true })}
+          </span>
+        ),
+      },
+      {
+        key: 'createdDate',
+        header: 'Created',
+        label: 'Created',
+        render: (r) => (
+          <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">
+            {r.createdDate ? formatDate(r.createdDate) : '—'}
+          </span>
+        ),
+      },
+    ],
+  },
+  sales: {
+    name: 'actizo-sales-report',
+    rowKey: (r) => r.refCode,
+    columns: [
+      { key: 'refCode', header: 'Sale ID', label: 'Sale ID' },
+      { key: 'customer', header: 'Customer', label: 'Customer' },
+      { key: 'product', header: 'Product', label: 'Product' },
+      { key: 'branchName', header: 'Branch', label: 'Branch' },
+      {
+        key: 'amount',
+        header: 'Amount',
+        label: 'Amount (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatCurrency(r.amount || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        label: 'Status',
+        render: (r) => <StatusBadge status={r.status} withDot />,
+      },
+      {
+        key: 'date',
+        header: 'Date',
+        label: 'Date',
+        render: (r) => (
+          <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">
+            {r.date ? formatDate(r.date) : '—'}
+          </span>
+        ),
+      },
+    ],
+  },
+  revenue: {
+    name: 'actizo-revenue-report',
+    rowKey: (r) => r.month ?? r.id,
+    columns: [
+      { key: 'month', header: 'Month', label: 'Month' },
+      {
+        key: 'revenue',
+        header: 'Revenue',
+        label: 'Revenue (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatCurrency(r.revenue || 0, { compact: true })}
+          </span>
+        ),
+      },
+      {
+        key: 'profit',
+        header: 'Profit',
+        label: 'Profit (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatCurrency(r.profit || 0, { compact: true })}
+          </span>
+        ),
+      },
+      {
+        key: 'margin',
+        header: 'Margin',
+        label: 'Margin %',
+        align: 'right',
+        render: (r) => {
+          const margin = r.revenue ? ((r.profit || 0) / r.revenue) * 100 : 0
+          return (
+            <span className="tabular-nums text-ink dark:text-slate-200">
+              {formatPercent(margin)}
+            </span>
+          )
+        },
+      },
+    ],
+  },
+  branch: {
+    name: 'actizo-branch-report',
+    rowKey: (r) => r.name,
+    columns: [
+      { key: 'name', header: 'Branch', label: 'Branch' },
+      { key: 'city', header: 'City', label: 'City' },
+      { key: 'region', header: 'Region', label: 'Region' },
+      {
+        key: 'totalRevenue',
+        header: 'Revenue',
+        label: 'Total Revenue (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatCurrency(r.totalRevenue || 0, { compact: true })}
+          </span>
+        ),
+      },
+      {
+        key: 'conversionRate',
+        header: 'Conversion',
+        label: 'Conversion %',
+        align: 'right',
+        render: (r) => (
+          <span className="tabular-nums text-ink dark:text-slate-200">
+            {formatPercent(r.conversionRate || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'targetAchievement',
+        header: 'Achievement',
+        label: 'Achievement %',
+        align: 'right',
+        render: (r) => {
+          const pct = r.targetAchievement || 0
+          const style = achievementStyleFromPct(pct)
+          return (
+            <div className="flex items-center justify-end gap-2.5">
+              <div className="hidden w-20 sm:block">
+                <ProgressBar value={pct} color={style.bar} size="sm" />
+              </div>
+              <span className={`w-12 text-right text-sm font-semibold tabular-nums ${style.text}`}>
+                {formatPercent(pct, 0)}
+              </span>
+            </div>
+          )
+        },
+      },
+    ],
+  },
+  staff: {
+    name: 'actizo-staff-report',
+    rowKey: (r) => r.name,
+    columns: [
+      { key: 'name', header: 'Staff', label: 'Staff' },
+      { key: 'role', header: 'Role', label: 'Role' },
+      { key: 'branchName', header: 'Branch', label: 'Branch' },
+      {
+        key: 'conversionRate',
+        header: 'Conversion',
+        label: 'Conversion %',
+        align: 'right',
+        render: (r) => (
+          <span className="tabular-nums text-ink dark:text-slate-200">
+            {formatPercent(r.conversionRate || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'revenue',
+        header: 'Revenue',
+        label: 'Revenue (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatCurrency(r.revenue || 0, { compact: true })}
+          </span>
+        ),
+      },
+      {
+        key: 'performanceScore',
+        header: 'Score',
+        label: 'Performance Score',
+        align: 'right',
+        render: (r) => (
+          <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
+            {formatNumber(r.performanceScore || 0)}
+          </span>
+        ),
+      },
+    ],
+  },
+  target: {
+    name: 'actizo-target-report',
+    rowKey: (r) => `${r.product ?? r.objective ?? ''}-${r.period ?? ''}`,
+    columns: [
+      { key: 'product', header: 'Objective', label: 'Objective' },
+      {
+        key: 'scope',
+        header: 'Type',
+        label: 'Type',
+        render: (r) => (
+          <span className="whitespace-nowrap text-ink-soft dark:text-slate-300">{r.scope || '—'}</span>
+        ),
+      },
+      { key: 'branchName', header: 'Branch', label: 'Branch' },
+      {
+        key: 'targetQty',
+        header: 'Target',
+        label: 'Target',
+        align: 'right',
+        render: (r) => (
+          <span className="tabular-nums text-ink-soft dark:text-slate-300">
+            {formatNumber(r.targetQty || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'achievedQty',
+        header: 'Achieved',
+        label: 'Achieved',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
+            {formatNumber(r.achievedQty || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'completion',
+        header: 'Completion',
+        label: 'Completion %',
+        align: 'right',
+        render: (r) => {
+          const pct = r.completion || 0
+          const style = achievementStyleFromPct(pct)
+          return (
+            <div className="flex items-center justify-end gap-2.5">
+              <div className="hidden w-20 sm:block">
+                <ProgressBar value={pct} color={style.bar} size="sm" />
+              </div>
+              <span className={`w-14 text-right text-sm font-semibold tabular-nums ${style.text}`}>
+                {formatPercent(pct, 0)}
+              </span>
+            </div>
+          )
+        },
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        label: 'Status',
+        render: (r) => <AchievementBadge pct={r.completion || 0} withLabel />,
+      },
+    ],
+  },
+  incentive: {
+    name: 'actizo-incentive-report',
+    rowKey: (r) => `${r.staffName ?? ''}-${r.month ?? ''}`,
+    columns: [
+      { key: 'staffName', header: 'Staff', label: 'Staff' },
+      { key: 'branchName', header: 'Branch', label: 'Branch' },
+      { key: 'month', header: 'Month', label: 'Month' },
+      {
+        key: 'total',
+        header: 'Total',
+        label: 'Total Incentive (AED)',
+        align: 'right',
+        render: (r) => (
+          <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatCurrency(r.total || 0)}
+          </span>
+        ),
+      },
+      {
+        key: 'type',
+        header: 'Type',
+        label: 'Type',
+        render: (r) => (
+          <span className="whitespace-nowrap text-ink-soft dark:text-slate-300">{r.type || '—'}</span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        label: 'Status',
+        render: (r) => <StatusBadge status={r.status} withDot />,
+      },
+    ],
+  },
+}
 
 /* ------------------------------------------------------------------ */
 /* Small presentational helpers                                       */
@@ -139,529 +425,65 @@ export default function Reports() {
   const [range, setRange] = useState('90')
   const [branch, setBranch] = useState('All')
 
+  // Live report fetched from the backend for the active tab/type.
+  const [report, setReport] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  // Fetch on mount + whenever the selected report type changes. The backend
+  // `:type` names match REPORT_TABS keys exactly (lead/sales/revenue/branch/
+  // staff/target/incentive), so no key remap is required.
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setReport(null)
+    reportsApi
+      .get(activeTab)
+      .then(({ data }) => {
+        if (active) setReport(data)
+      })
+      .catch(() => {
+        if (active) setReport(null)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [activeTab])
+
   /* -------------------------------------------------------------- */
-  /* Per-domain derived datasets (memoised)                          */
+  /* Safe accessors onto the fetched report                          */
   /* -------------------------------------------------------------- */
 
-  // Lead — pipeline distribution by status
+  const summary = report?.summary || {}
+  const charts = report?.charts || {}
+  const rows = report?.rows || []
+
+  const activeMeta = REPORT_META[activeTab]
+  const activeTabMeta = REPORT_TABS.find((t) => t.key === activeTab)
+
+  // Lead pipeline pie — colour each status slice from the chart palette.
   const leadByStatus = useMemo(
     () =>
-      LEAD_STATUSES.map((s, i) => ({
-        name: s,
-        value: leadCountsByStatus[s] || 0,
+      (charts.byStatus || []).map((s, i) => ({
+        name: s.name,
+        value: s.value || 0,
         fill: CHART_COLORS[i % CHART_COLORS.length],
       })),
-    [],
+    [charts.byStatus],
   )
-
-  const wonLeadCount = leadCountsByStatus.Won || 0
-  const leadConversion = leads.length ? (wonLeadCount / leads.length) * 100 : 0
-  const wonValue = useMemo(
-    () => leads.filter((l) => l.status === 'Won').reduce((s, l) => s + l.value, 0),
-    [],
-  )
-
-  // Branch — total network revenue
-  const totalBranchRevenue = useMemo(
-    () => branches.reduce((s, b) => s + b.totalRevenue, 0),
-    [],
-  )
-
-  // Staff — top performers by revenue
-  const topStaffRevenue = useMemo(
-    () => staffSales.slice(0, 8).map((s) => ({ name: s.name.split(' ')[0], revenue: s.revenue })),
-    [],
-  )
-
-  // Target — target vs achievement by product
-  const targetVsAchievement = useMemo(
-    () =>
-      generalTargets.slice(0, 8).map((t) => ({
-        name: t.product,
-        target: t.targetQty,
-        achieved: t.achievedQty,
-      })),
-    [],
-  )
-
-  /* -------------------------------------------------------------- */
-  /* Report registry — each tab maps to a table dataset + columns   */
-  /* -------------------------------------------------------------- */
-
-  const REPORTS = useMemo(
-    () => ({
-      lead: {
-        name: 'actizo-lead-report',
-        rows: leads.slice(0, 12).map((l) => ({
-          id: l.id,
-          name: l.name,
-          company: l.company || '—',
-          source: l.source,
-          branchName: l.branchName,
-          staffName: l.staffName,
-          status: l.status,
-          priority: l.priority,
-          value: l.value,
-          createdDate: l.createdDate,
-        })),
-        columns: [
-          { key: 'id', header: 'Lead ID', label: 'Lead ID' },
-          { key: 'name', header: 'Name', label: 'Name' },
-          { key: 'company', header: 'Company', label: 'Company' },
-          { key: 'source', header: 'Source', label: 'Source' },
-          { key: 'branchName', header: 'Branch', label: 'Branch' },
-          { key: 'staffName', header: 'Owner', label: 'Owner' },
-          {
-            key: 'status',
-            header: 'Status',
-            label: 'Status',
-            render: (r) => <StatusBadge status={r.status} withDot />,
-          },
-          {
-            key: 'value',
-            header: 'Value',
-            label: 'Value (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-                {formatCurrency(r.value, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'createdDate',
-            header: 'Created',
-            label: 'Created',
-            render: (r) => (
-              <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">
-                {formatDate(r.createdDate)}
-              </span>
-            ),
-          },
-        ],
-      },
-      sales: {
-        name: 'actizo-sales-report',
-        rows: sales.slice(0, 12).map((s) => ({
-          id: s.id,
-          customer: s.customer,
-          product: s.product,
-          branchName: s.branchName,
-          staffName: s.staffName,
-          quantity: s.quantity,
-          unit: s.unit,
-          amount: s.amount,
-          status: s.status,
-          date: s.date,
-        })),
-        columns: [
-          { key: 'id', header: 'Sale ID', label: 'Sale ID' },
-          { key: 'customer', header: 'Customer', label: 'Customer' },
-          { key: 'product', header: 'Product', label: 'Product' },
-          { key: 'branchName', header: 'Branch', label: 'Branch' },
-          { key: 'staffName', header: 'Staff', label: 'Staff' },
-          {
-            key: 'quantity',
-            header: 'Qty',
-            label: 'Quantity',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink dark:text-slate-200">
-                {formatNumber(r.quantity)}
-                <span className="ml-1 text-xs text-ink-faint dark:text-slate-500">{r.unit}</span>
-              </span>
-            ),
-          },
-          {
-            key: 'amount',
-            header: 'Amount',
-            label: 'Amount (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-                {formatCurrency(r.amount)}
-              </span>
-            ),
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            label: 'Status',
-            render: (r) => <StatusBadge status={r.status} withDot />,
-          },
-          {
-            key: 'date',
-            header: 'Date',
-            label: 'Date',
-            render: (r) => (
-              <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">
-                {formatDate(r.date)}
-              </span>
-            ),
-          },
-        ],
-      },
-      revenue: {
-        name: 'actizo-revenue-report',
-        rows: monthlyOverview.map((m) => ({
-          month: m.month,
-          revenue: m.revenue,
-          expense: m.expense,
-          profit: m.profit,
-          margin: m.revenue ? (m.profit / m.revenue) * 100 : 0,
-        })),
-        columns: [
-          { key: 'month', header: 'Month', label: 'Month' },
-          {
-            key: 'revenue',
-            header: 'Revenue',
-            label: 'Revenue (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-                {formatCurrency(r.revenue, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'expense',
-            header: 'Expense',
-            label: 'Expense (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink-soft dark:text-slate-300">
-                {formatCurrency(r.expense, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'profit',
-            header: 'Profit',
-            label: 'Profit (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                {formatCurrency(r.profit, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'margin',
-            header: 'Margin',
-            label: 'Margin %',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink dark:text-slate-200">
-                {formatPercent(r.margin)}
-              </span>
-            ),
-          },
-        ],
-      },
-      branch: {
-        name: 'actizo-branch-report',
-        rows: branches.map((b) => ({
-          code: b.code,
-          name: b.name,
-          region: b.region,
-          manager: b.manager,
-          staffCount: b.staffCount,
-          totalRevenue: b.totalRevenue,
-          targetAchievement: b.targetAchievement,
-          status: b.status === 'active' ? 'Active' : b.status,
-        })),
-        columns: [
-          {
-            key: 'code',
-            header: 'Code',
-            label: 'Code',
-            render: (r) => (
-              <span className="font-mono text-xs font-semibold text-brand-600 dark:text-brand-400">
-                {r.code}
-              </span>
-            ),
-          },
-          { key: 'name', header: 'Branch', label: 'Branch' },
-          { key: 'region', header: 'Region', label: 'Region' },
-          { key: 'manager', header: 'Manager', label: 'Manager' },
-          {
-            key: 'staffCount',
-            header: 'Staff',
-            label: 'Staff',
-            align: 'right',
-            render: (r) => <span className="tabular-nums">{r.staffCount}</span>,
-          },
-          {
-            key: 'totalRevenue',
-            header: 'Revenue',
-            label: 'Total Revenue (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-                {formatCurrency(r.totalRevenue, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'targetAchievement',
-            header: 'Achievement',
-            label: 'Achievement %',
-            align: 'right',
-            render: (r) => {
-              const style = achievementStyleFromPct(r.targetAchievement)
-              return (
-                <div className="flex items-center justify-end gap-2.5">
-                  <div className="hidden w-20 sm:block">
-                    <ProgressBar value={r.targetAchievement} color={style.bar} size="sm" />
-                  </div>
-                  <span className={`w-12 text-right text-sm font-semibold tabular-nums ${style.text}`}>
-                    {formatPercent(r.targetAchievement, 0)}
-                  </span>
-                </div>
-              )
-            },
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            label: 'Status',
-            render: (r) => <StatusBadge status={r.status} withDot />,
-          },
-        ],
-      },
-      staff: {
-        name: 'actizo-staff-report',
-        rows: topPerformers.slice(0, 12).map((s) => ({
-          id: s.id,
-          name: s.name,
-          role: s.role,
-          branchName: s.branchName,
-          assignedLeads: s.assignedLeads,
-          wonLeads: s.wonLeads,
-          conversionRate: s.conversionRate,
-          revenue: s.revenue,
-          performanceScore: s.performanceScore,
-        })),
-        columns: [
-          { key: 'name', header: 'Staff', label: 'Staff' },
-          { key: 'role', header: 'Role', label: 'Role' },
-          { key: 'branchName', header: 'Branch', label: 'Branch' },
-          {
-            key: 'wonLeads',
-            header: 'Won',
-            label: 'Won Leads',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink dark:text-slate-200">
-                {r.wonLeads}
-                <span className="text-ink-faint dark:text-slate-500"> / {r.assignedLeads}</span>
-              </span>
-            ),
-          },
-          {
-            key: 'conversionRate',
-            header: 'Conversion',
-            label: 'Conversion %',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink dark:text-slate-200">
-                {formatPercent(r.conversionRate)}
-              </span>
-            ),
-          },
-          {
-            key: 'revenue',
-            header: 'Revenue',
-            label: 'Revenue (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-                {formatCurrency(r.revenue, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'performanceScore',
-            header: 'Score',
-            label: 'Performance Score',
-            align: 'right',
-            render: (r) => (
-              <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
-                {formatNumber(r.performanceScore)}
-              </span>
-            ),
-          },
-        ],
-      },
-      target: {
-        name: 'actizo-target-report',
-        rows: [
-          ...generalTargets.slice(0, 6).map((t) => ({
-            id: t.id,
-            objective: t.product,
-            scope: t.scope,
-            owner: t.scope === 'Staff' ? t.staffName : t.branchName,
-            target: `${formatNumber(t.targetQty)} ${t.unit}`,
-            achieved: `${formatNumber(t.achievedQty)} ${t.unit}`,
-            completion: t.completion,
-            status: t.status,
-          })),
-          ...specialTargets.slice(0, 4).map((t) => ({
-            id: t.id,
-            objective: t.name,
-            scope: t.type,
-            owner: t.branchName,
-            target: formatCurrency(t.targetValue, { compact: true }),
-            achieved: formatCurrency(t.achievedValue, { compact: true }),
-            completion: t.completion,
-            status: t.status,
-          })),
-        ],
-        columns: [
-          { key: 'objective', header: 'Objective', label: 'Objective' },
-          {
-            key: 'scope',
-            header: 'Type',
-            label: 'Type',
-            render: (r) => (
-              <span className="whitespace-nowrap text-ink-soft dark:text-slate-300">{r.scope}</span>
-            ),
-          },
-          { key: 'owner', header: 'Owner', label: 'Owner' },
-          {
-            key: 'target',
-            header: 'Target',
-            label: 'Target',
-            align: 'right',
-            render: (r) => <span className="tabular-nums text-ink-soft dark:text-slate-300">{r.target}</span>,
-          },
-          {
-            key: 'achieved',
-            header: 'Achieved',
-            label: 'Achieved',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-ink dark:text-slate-100">{r.achieved}</span>
-            ),
-          },
-          {
-            key: 'completion',
-            header: 'Completion',
-            label: 'Completion %',
-            align: 'right',
-            render: (r) => {
-              const style = achievementStyleFromPct(r.completion)
-              return (
-                <div className="flex items-center justify-end gap-2.5">
-                  <div className="hidden w-20 sm:block">
-                    <ProgressBar value={r.completion} color={style.bar} size="sm" />
-                  </div>
-                  <span className={`w-14 text-right text-sm font-semibold tabular-nums ${style.text}`}>
-                    {formatPercent(r.completion, 0)}
-                  </span>
-                </div>
-              )
-            },
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            label: 'Status',
-            render: (r) => <AchievementBadge pct={r.completion} withLabel />,
-          },
-        ],
-      },
-      incentive: {
-        name: 'actizo-incentive-report',
-        rows: incentives.slice(0, 12).map((i) => ({
-          id: i.id,
-          staffName: i.staffName,
-          branchName: i.branchName,
-          month: i.month,
-          baseSales: i.baseSales,
-          incentiveRate: i.incentiveRate,
-          bonus: i.bonus,
-          total: i.total,
-          type: i.type,
-          status: i.status,
-        })),
-        columns: [
-          { key: 'staffName', header: 'Staff', label: 'Staff' },
-          { key: 'branchName', header: 'Branch', label: 'Branch' },
-          {
-            key: 'baseSales',
-            header: 'Base Sales',
-            label: 'Base Sales (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink-soft dark:text-slate-300">
-                {formatCurrency(r.baseSales, { compact: true })}
-              </span>
-            ),
-          },
-          {
-            key: 'incentiveRate',
-            header: 'Rate',
-            label: 'Rate %',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink dark:text-slate-200">{formatPercent(r.incentiveRate)}</span>
-            ),
-          },
-          {
-            key: 'bonus',
-            header: 'Bonus',
-            label: 'Bonus (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="tabular-nums text-ink-soft dark:text-slate-300">
-                {r.bonus ? formatCurrency(r.bonus) : '—'}
-              </span>
-            ),
-          },
-          {
-            key: 'total',
-            header: 'Total',
-            label: 'Total Incentive (AED)',
-            align: 'right',
-            render: (r) => (
-              <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                {formatCurrency(r.total)}
-              </span>
-            ),
-          },
-          {
-            key: 'type',
-            header: 'Type',
-            label: 'Type',
-            render: (r) => (
-              <span className="whitespace-nowrap text-ink-soft dark:text-slate-300">{r.type}</span>
-            ),
-          },
-          {
-            key: 'status',
-            header: 'Status',
-            label: 'Status',
-            render: (r) => <StatusBadge status={r.status} withDot />,
-          },
-        ],
-      },
-    }),
-    [],
-  )
-
-  const activeReport = REPORTS[activeTab]
 
   /* -------------------------------------------------------------- */
   /* Export — uses the active report's exact rows + labelled columns */
   /* -------------------------------------------------------------- */
 
   const runExport = (format) => {
-    const exportColumns = activeReport.columns.map((c) => ({
+    const exportColumns = activeMeta.columns.map((c) => ({
       key: c.key,
       label: c.label || c.header,
     }))
-    exportData(format, activeReport.rows, activeReport.name, exportColumns)
+    exportData(format, rows, activeMeta.name, exportColumns)
   }
 
   const headerActions = (
@@ -701,7 +523,7 @@ export default function Reports() {
   )
 
   /* -------------------------------------------------------------- */
-  /* Per-tab content blocks                                          */
+  /* Per-tab content blocks (summary cards + charts)                 */
   /* -------------------------------------------------------------- */
 
   const TAB_CONTENT = {
@@ -709,27 +531,14 @@ export default function Reports() {
     lead: (
       <>
         <KpiGrid>
-          <KPICard label="Total Leads" value={leads.length} delta={12.4} icon={FiUsers} tone="brand" />
-          <KPICard
-            label="Won Leads"
-            value={wonLeadCount}
-            delta={16.8}
-            icon={FiCheckCircle}
-            tone="emerald"
-          />
+          <KPICard label="Total Leads" value={summary.total || 0} icon={FiUsers} tone="brand" />
+          <KPICard label="Won Leads" value={summary.won || 0} icon={FiCheckCircle} tone="emerald" />
+          <KPICard label="Lost Leads" value={summary.lost || 0} icon={FiActivity} tone="amber" />
           <KPICard
             label="Conversion Rate"
-            value={formatPercent(leadConversion)}
-            delta={2.3}
+            value={formatPercent(summary.total ? ((summary.won || 0) / summary.total) * 100 : 0)}
             icon={FiPercent}
             tone="violet"
-          />
-          <KPICard
-            label="Won Pipeline Value"
-            value={formatCurrency(wonValue, { compact: true })}
-            delta={9.1}
-            icon={FiDollarSign}
-            tone="sky"
           />
         </KpiGrid>
 
@@ -737,6 +546,7 @@ export default function Reports() {
           title="Lead Pipeline"
           subtitle="Distribution of leads across the pipeline"
           icon={FiPieChart}
+          loading={loading}
         >
           <PieChartView data={leadByStatus} dataKey="value" nameKey="name" />
         </ChartCard>
@@ -747,48 +557,26 @@ export default function Reports() {
     sales: (
       <>
         <KpiGrid>
-          <KPICard label="Total Sales" value={totalSales} delta={9.4} icon={FiShoppingBag} tone="brand" />
+          <KPICard label="Total Sales" value={summary.totalSales || 0} icon={FiShoppingBag} tone="brand" />
           <KPICard
             label="Total Revenue"
-            value={formatCurrency(totalRevenue, { compact: true })}
-            delta={12.8}
+            value={formatCurrency(summary.totalRevenue || 0, { compact: true })}
             icon={FiDollarSign}
             tone="emerald"
-          />
-          <KPICard
-            label="Monthly Revenue"
-            value={formatCurrency(monthlyRevenue, { compact: true })}
-            delta={6.1}
-            icon={FiCalendar}
-            tone="sky"
-          />
-          <KPICard
-            label="Avg Order Value"
-            value={formatCurrency(avgOrderValue, { compact: true })}
-            delta={-1.5}
-            icon={FiActivity}
-            tone="amber"
           />
         </KpiGrid>
 
         <ChartCard
-          title="Revenue Overview"
-          subtitle="Monthly sales against target"
-          icon={FiTrendingUp}
-          legend={
-            <>
-              <LegendDot color={CHART_COLORS[0]} label="Revenue" />
-              <LegendDot color={CHART_COLORS[6]} label="Target" />
-            </>
-          }
+          title="Revenue by Product"
+          subtitle="Completed sales revenue per product"
+          icon={FiBarChart2}
+          loading={loading}
+          legend={<LegendDot color={CHART_COLORS[0]} label="Revenue" />}
         >
-          <AreaChartView
-            data={revenueTrend}
-            xKey="month"
-            areas={[
-              { key: 'revenue', color: CHART_COLORS[0], name: 'Revenue' },
-              { key: 'target', color: CHART_COLORS[6], name: 'Target' },
-            ]}
+          <BarChartView
+            data={charts.byProduct || []}
+            xKey="name"
+            bars={[{ key: 'value', color: CHART_COLORS[0], name: 'Revenue' }]}
             tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
           />
         </ChartCard>
@@ -801,52 +589,42 @@ export default function Reports() {
         <KpiGrid>
           <KPICard
             label="Total Revenue"
-            value={formatCurrency(financeKpis.revenue, { compact: true })}
-            delta={14.2}
+            value={formatCurrency(summary.revenue || 0, { compact: true })}
             icon={FiDollarSign}
             tone="brand"
           />
           <KPICard
             label="Net Profit"
-            value={formatCurrency(financeKpis.profit, { compact: true })}
-            delta={11.4}
+            value={formatCurrency(summary.profit || 0, { compact: true })}
             icon={FiTrendingUp}
             tone="emerald"
           />
           <KPICard
             label="Profit Margin"
-            value={formatPercent(financeKpis.profitMargin)}
-            delta={1.8}
+            value={formatPercent(summary.revenue ? ((summary.profit || 0) / summary.revenue) * 100 : 0)}
             icon={FiPercent}
             tone="violet"
-          />
-          <KPICard
-            label="Total Expenses"
-            value={formatCurrency(financeKpis.expenses, { compact: true })}
-            delta={4.6}
-            deltaSuffix="vs last month"
-            icon={FiActivity}
-            tone="amber"
           />
         </KpiGrid>
 
         <ChartCard
           title="Revenue Overview"
-          subtitle="Monthly revenue versus expenses"
+          subtitle="Monthly revenue versus profit"
           icon={FiBarChart2}
+          loading={loading}
           legend={
             <>
               <LegendDot color={CHART_COLORS[0]} label="Revenue" />
-              <LegendDot color={CHART_COLORS[6]} label="Expense" />
+              <LegendDot color={CHART_COLORS[6]} label="Profit" />
             </>
           }
         >
           <AreaChartView
-            data={monthlyOverview}
+            data={charts.trend || []}
             xKey="month"
             areas={[
               { key: 'revenue', color: CHART_COLORS[0], name: 'Revenue' },
-              { key: 'expense', color: CHART_COLORS[6], name: 'Expense' },
+              { key: 'profit', color: CHART_COLORS[6], name: 'Profit' },
             ]}
             tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
           />
@@ -858,42 +636,26 @@ export default function Reports() {
     branch: (
       <>
         <KpiGrid>
-          <KPICard label="Total Branches" value={branches.length} icon={FiHome} tone="brand" />
+          <KPICard label="Total Branches" value={summary.branches || 0} icon={FiHome} tone="brand" />
           <KPICard
             label="Network Revenue"
-            value={formatCurrency(totalBranchRevenue, { compact: true })}
-            delta={13.5}
+            value={formatCurrency(summary.totalRevenue || 0, { compact: true })}
             icon={FiDollarSign}
             tone="emerald"
-          />
-          <KPICard
-            label="Avg Achievement"
-            value={formatPercent(
-              branches.reduce((s, b) => s + b.targetAchievement, 0) / branches.length,
-            )}
-            delta={3.4}
-            icon={FiTarget}
-            tone="violet"
-          />
-          <KPICard
-            label="Total Staff"
-            value={staff.length}
-            delta={6.5}
-            icon={FiUsers}
-            tone="sky"
           />
         </KpiGrid>
 
         <ChartCard
           title="Branch Performance"
-          subtitle="Total revenue by branch"
+          subtitle="Monthly revenue by branch"
           icon={FiBarChart2}
+          loading={loading}
           legend={<LegendDot color={CHART_COLORS[0]} label="Revenue" />}
         >
           <BarChartView
-            data={branches.map((b) => ({ city: b.city, revenue: b.totalRevenue }))}
-            xKey="city"
-            bars={[{ key: 'revenue', color: CHART_COLORS[0], name: 'Revenue' }]}
+            data={charts.revenue || []}
+            xKey="name"
+            bars={[{ key: 'value', color: CHART_COLORS[0], name: 'Revenue' }]}
             tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
           />
         </ChartCard>
@@ -904,29 +666,12 @@ export default function Reports() {
     staff: (
       <>
         <KpiGrid>
-          <KPICard label="Total Staff" value={staff.length} delta={6.5} icon={FiUsers} tone="brand" />
+          <KPICard label="Total Staff" value={summary.staff || 0} icon={FiUsers} tone="brand" />
           <KPICard
-            label="Top Performer"
-            value={topPerformers[0]?.performanceScore ?? 0}
-            suffix="pts"
-            icon={FiAward}
-            tone="violet"
-          />
-          <KPICard
-            label="Avg Conversion"
-            value={formatPercent(
-              staff.reduce((s, m) => s + m.conversionRate, 0) / staff.length,
-            )}
-            delta={2.1}
-            icon={FiPercent}
+            label="Total Revenue"
+            value={formatCurrency(summary.totalRevenue || 0, { compact: true })}
+            icon={FiDollarSign}
             tone="emerald"
-          />
-          <KPICard
-            label="Total Won Leads"
-            value={staff.reduce((s, m) => s + m.wonLeads, 0)}
-            delta={14.7}
-            icon={FiUserCheck}
-            tone="sky"
           />
         </KpiGrid>
 
@@ -934,12 +679,13 @@ export default function Reports() {
           title="Top Staff by Revenue"
           subtitle="Leading sales representatives"
           icon={FiBarChart2}
+          loading={loading}
           legend={<LegendDot color={CHART_COLORS[0]} label="Revenue" />}
         >
           <BarChartView
-            data={topStaffRevenue}
+            data={charts.topByRevenue || []}
             xKey="name"
-            bars={[{ key: 'revenue', color: CHART_COLORS[0], name: 'Revenue' }]}
+            bars={[{ key: 'value', color: CHART_COLORS[0], name: 'Revenue' }]}
             tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
           />
         </ChartCard>
@@ -950,33 +696,15 @@ export default function Reports() {
     target: (
       <>
         <KpiGrid>
-          <KPICard label="Total Targets" value={targetSummary.total} icon={FiTarget} tone="brand" />
-          <KPICard
-            label="Achieved"
-            value={targetSummary.achieved}
-            delta={8.2}
-            icon={FiCheckCircle}
-            tone="emerald"
-          />
-          <KPICard
-            label="Overachieved"
-            value={targetSummary.overachieved}
-            icon={FiZap}
-            tone="violet"
-          />
-          <KPICard
-            label="Avg Completion"
-            value={formatPercent(targetSummary.avgCompletion)}
-            delta={4.1}
-            icon={FiPercent}
-            tone="sky"
-          />
+          <KPICard label="Total Targets" value={summary.total || 0} icon={FiTarget} tone="brand" />
+          <KPICard label="Achieved" value={summary.achieved || 0} icon={FiCheckCircle} tone="emerald" />
         </KpiGrid>
 
         <ChartCard
           title="Target vs Achievement"
           subtitle="Quantity targets by product"
           icon={FiBarChart2}
+          loading={loading}
           legend={
             <>
               <LegendDot color={CHART_COLORS[2]} label="Target" />
@@ -985,7 +713,7 @@ export default function Reports() {
           }
         >
           <BarChartView
-            data={targetVsAchievement}
+            data={charts.completion || []}
             xKey="name"
             horizontal
             bars={[
@@ -1003,50 +731,30 @@ export default function Reports() {
         <KpiGrid>
           <KPICard
             label="Total Incentives"
-            value={formatCurrency(totalIncentives, { compact: true })}
-            delta={10.3}
+            value={formatCurrency(summary.total || 0, { compact: true })}
             icon={FiAward}
             tone="brand"
           />
-          <KPICard
-            label="Highest Payout"
-            value={formatCurrency(highestIncentive, { compact: true })}
-            icon={FiZap}
-            tone="violet"
-          />
-          <KPICard
-            label="Top Performer"
-            value={topPerformer?.staffName?.split(' ')[0] ?? '—'}
-            icon={FiUser}
-            tone="emerald"
-          />
-          <KPICard
-            label="Paid This Month"
-            value={incentives.filter((i) => i.status === 'Paid').length}
-            suffix="staff"
-            icon={FiUserPlus}
-            tone="sky"
-          />
+          <KPICard label="Paid Records" value={summary.paid || 0} icon={FiCheckCircle} tone="emerald" />
         </KpiGrid>
 
         <ChartCard
-          title="Incentive Trend"
-          subtitle="Company-wide incentive payouts"
+          title="Incentives by Branch"
+          subtitle="Company-wide incentive payouts per branch"
           icon={FiTrendingUp}
+          loading={loading}
           legend={<LegendDot color={CHART_COLORS[0]} label="Incentive" />}
         >
           <LineChartView
-            data={incentiveTrend}
-            xKey="month"
-            lines={[{ key: 'incentive', color: CHART_COLORS[0], name: 'Incentive' }]}
+            data={charts.byBranch || []}
+            xKey="name"
+            lines={[{ key: 'value', color: CHART_COLORS[0], name: 'Incentive' }]}
             tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
           />
         </ChartCard>
       </>
     ),
   }
-
-  const activeTabMeta = REPORT_TABS.find((t) => t.key === activeTab)
 
   /* -------------------------------------------------------------- */
   /* Render                                                          */
@@ -1119,7 +827,7 @@ export default function Reports() {
               <SectionHeading
                 icon={activeTabMeta?.key === 'incentive' ? FiAward : FiFileText}
                 title={`${activeTabMeta?.label} Report`}
-                subtitle={`${formatNumber(activeReport.rows.length)} record${activeReport.rows.length === 1 ? '' : 's'} in this preview`}
+                subtitle={`${formatNumber(rows.length)} record${rows.length === 1 ? '' : 's'} in this preview`}
               />
               <div className="flex items-center gap-1.5 rounded-xl border border-line bg-surface-muted/60 p-1 dark:border-slate-800 dark:bg-slate-800/40">
                 <Button variant="ghost" size="sm" leftIcon={<FiFileText />} onClick={() => runExport('pdf')}>
@@ -1136,9 +844,10 @@ export default function Reports() {
 
             <div className="mt-5">
               <DataTable
-                columns={activeReport.columns}
-                data={activeReport.rows}
-                rowKey={(row) => row.id ?? row.code ?? row.month ?? row.staffName ?? row.objective}
+                columns={activeMeta.columns}
+                data={rows}
+                loading={loading}
+                rowKey={activeMeta.rowKey}
                 emptyIcon={FiFilter}
                 emptyTitle="No data available"
                 emptyDescription="There are no records to display for this report yet."

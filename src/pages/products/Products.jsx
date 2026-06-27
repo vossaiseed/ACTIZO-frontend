@@ -19,6 +19,8 @@ import {
 
 import {
   selectProducts,
+  selectProductStatus,
+  fetchProducts,
   addProduct,
   updateProduct,
   toggleProductStatus,
@@ -51,7 +53,6 @@ const UNIT_OPTS = ['SQM', 'PCS', 'TON', 'BAG', 'LTR', 'SET', 'CUM', 'ROLL', 'BOX
 
 const PAGE_SIZE = 8
 const SEARCH_KEYS = ['name', 'code', 'brand', 'category']
-const today = () => new Date().toISOString().slice(0, 10)
 
 export default function Products() {
   const dispatch = useDispatch()
@@ -60,11 +61,18 @@ export default function Products() {
 
   const products = useSelector(selectProducts)
   const filters = useSelector((s) => s.products.filters)
+  const status = useSelector(selectProductStatus)
+  const loading = status === 'loading' || status === 'idle'
 
   const [page, setPage] = useState(1)
   const [sort, setLocalSort] = useState({ key: 'createdDate', dir: 'desc' })
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+
+  // Load the catalogue from the API on mount.
+  useEffect(() => {
+    dispatch(fetchProducts())
+  }, [dispatch])
 
   const kpis = useMemo(() => {
     const active = products.filter((p) => p.status === 'Active')
@@ -209,6 +217,7 @@ export default function Products() {
       <DataTable
         columns={columns}
         data={paged}
+        loading={loading}
         rowKey={(r) => r.id}
         sort={sort}
         onSort={onSort}
@@ -229,13 +238,8 @@ export default function Products() {
             dispatch(updateProduct({ id: editing.id, ...data }))
             toast.success(`"${data.name}" updated.`, { title: 'Product updated' })
           } else {
-            dispatch(addProduct({
-              id: `PRD-${Date.now()}`,
-              ...data,
-              sold: 0,
-              growth: 0,
-              createdDate: today(),
-            }))
+            // Backend assigns the id / created date and derives sold/growth.
+            dispatch(addProduct(data))
             toast.success(`"${data.name}" added to the catalogue.`, { title: 'Product created' })
           }
           setFormOpen(false)
@@ -256,7 +260,7 @@ function ProductFormModal({ open, onClose, product, onSave }) {
   } = useForm({
     defaultValues: {
       name: '', category: PRODUCT_CATEGORIES[0], code: '', brand: '',
-      unit: 'SQM', description: '', price: '', status: 'Active',
+      unit: 'SQM', description: '', price: '', status: 'Active', type: 'General',
     },
   })
 
@@ -268,11 +272,11 @@ function ProductFormModal({ open, onClose, product, onSave }) {
           ? {
               name: product.name, category: product.category, code: product.code,
               brand: product.brand, unit: product.unit, description: product.description || '',
-              price: product.price, status: product.status,
+              price: product.price, status: product.status, type: product.type || 'General',
             }
           : {
               name: '', category: PRODUCT_CATEGORIES[0], code: '', brand: '',
-              unit: 'SQM', description: '', price: '', status: 'Active',
+              unit: 'SQM', description: '', price: '', status: 'Active', type: 'General',
             },
       )
     }
@@ -315,6 +319,7 @@ function ProductFormModal({ open, onClose, product, onSave }) {
           ))}
         </datalist>
         <Input label="Selling Price (₹)" type="number" min="0" step="1" error={errors.price?.message} {...register('price', { required: 'Selling price is required', min: { value: 0, message: 'Invalid price' } })} />
+        <Select label="Type" options={[{ value: 'General', label: 'General' }, { value: 'Special', label: 'Special' }]} {...register('type', { required: true })} />
         <Select label="Status" options={[{ value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }]} {...register('status', { required: true })} />
         <div className="sm:col-span-2">
           <Textarea label="Description" rows={3} placeholder="Short product description…" {...register('description')} />

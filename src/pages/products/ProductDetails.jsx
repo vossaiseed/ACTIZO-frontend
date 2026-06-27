@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { motion } from 'framer-motion'
@@ -16,9 +16,7 @@ import {
   FiPower,
 } from 'react-icons/fi'
 
-import { selectProductById, toggleProductStatus } from '@/redux/slices/productSlice'
-import { productById as productByIdData } from '@/data/products'
-import { selectSales } from '@/redux/slices/salesSlice'
+import { selectProductById, fetchProduct, toggleProductStatus } from '@/redux/slices/productSlice'
 import { formatCurrency, formatNumber, formatDate } from '@/utils/format'
 
 import PageHeader from '@/components/common/PageHeader'
@@ -52,14 +50,30 @@ export default function ProductDetails() {
   const dispatch = useDispatch()
   const toast = useToast()
 
-  const fromStore = useSelector(selectProductById(id))
-  const product = fromStore || productByIdData(id)
-  const sales = useSelector(selectSales).items
+  const product = useSelector(selectProductById(id))
+  const status = useSelector((s) => s.products.status)
 
-  const relatedSales = useMemo(
-    () => sales.filter((s) => s.productId === id),
-    [sales, id],
-  )
+  // Fetch the full product (incl. salesHistory) from the API on mount.
+  useEffect(() => {
+    if (id) dispatch(fetchProduct(id))
+  }, [id, dispatch])
+
+  const relatedSales = useMemo(() => product?.salesHistory || [], [product])
+
+  // Loading — product not yet in the store and a fetch is in flight.
+  if (!product && (status === 'loading' || status === 'idle')) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+        <div className="h-8 w-32 animate-pulse rounded-lg bg-surface-muted dark:bg-slate-800" />
+        <Card padding="lg">
+          <div className="space-y-4">
+            <div className="h-6 w-48 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+            <div className="h-40 animate-pulse rounded-xl bg-surface-muted dark:bg-slate-800" />
+          </div>
+        </Card>
+      </motion.div>
+    )
+  }
 
   if (!product) {
     return (
@@ -77,12 +91,10 @@ export default function ProductDetails() {
   const revenue = product.price * product.sold
 
   const saleColumns = [
-    { key: 'id', header: 'Sale ID', render: (r) => <span className="font-mono text-xs font-semibold text-brand-600 dark:text-brand-400">{r.id}</span> },
-    { key: 'customer', header: 'Customer', render: (r) => (
-      <div className="flex items-center gap-2.5"><Avatar name={r.customer} size="sm" /><span className="font-medium text-ink dark:text-slate-100">{r.customer}</span></div>
+    { key: 'branchName', header: 'Branch', render: (r) => (
+      <div className="flex items-center gap-2.5"><Avatar name={r.branchName} size="sm" /><span className="font-medium text-ink dark:text-slate-100">{r.branchName}</span></div>
     ) },
-    { key: 'branchName', header: 'Branch', render: (r) => <span className="text-ink-soft dark:text-slate-400">{r.branchName}</span> },
-    { key: 'quantity', header: 'Qty', align: 'right', render: (r) => `${formatNumber(r.quantity)} ${r.unit || ''}` },
+    { key: 'quantity', header: 'Qty', align: 'right', render: (r) => `${formatNumber(r.quantity)} ${product.unit || ''}` },
     { key: 'amount', header: 'Amount', align: 'right', render: (r) => <span className="font-semibold">{formatCurrency(r.amount)}</span> },
     { key: 'date', header: 'Date', render: (r) => formatDate(r.date) },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} withDot /> },
@@ -168,7 +180,7 @@ export default function ProductDetails() {
       <Card title="Related Sales History" subtitle={`${relatedSales.length} sale${relatedSales.length === 1 ? '' : 's'} of this product`} icon={<FiShoppingCart className="h-5 w-5" />}>
         <div className="mt-2">
           {relatedSales.length ? (
-            <DataTable columns={saleColumns} data={relatedSales.slice(0, 10)} rowKey={(r) => r.id} />
+            <DataTable columns={saleColumns} data={relatedSales.slice(0, 10)} rowKey={(r, i) => r.id ?? i} />
           ) : (
             <EmptyState icon={FiShoppingCart} title="No sales yet" description="Sales recorded for this product will appear here." />
           )}

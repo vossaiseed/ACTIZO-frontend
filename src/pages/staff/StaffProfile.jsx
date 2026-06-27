@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useDispatch, useSelector } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
   FiArrowLeft,
@@ -22,9 +23,11 @@ import {
 import { cn } from '@/utils/cn'
 import { formatCurrency, formatNumber, formatPercent, formatDate } from '@/utils/format'
 
-import { staffById } from '@/data/staff'
-import { leads } from '@/data/leads'
-import { incentiveHistory } from '@/data/incentives'
+import {
+  fetchStaffMember,
+  selectStaffById,
+  selectStaffStatus,
+} from '@/redux/slices/staffSlice'
 
 import PageHeader from '@/components/common/PageHeader'
 import Button from '@/components/ui/Button'
@@ -70,8 +73,19 @@ function seededFactors(seed, count) {
 export default function StaffProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const dispatch = useDispatch()
 
-  const member = staffById(id)
+  // Read from the store (item or current); fetch the full member on mount.
+  const member = useSelector(selectStaffById(id))
+  const staffStatus = useSelector(selectStaffStatus)
+
+  useEffect(() => {
+    if (id) dispatch(fetchStaffMember(id))
+  }, [id, dispatch])
+
+  // Numeric metrics from the API, guarded so missing values never crash.
+  const revenue = Number(member?.revenue) || 0
+  const target = Number(member?.target) || 0
 
   // Hooks must run regardless of whether member exists.
   const salesHistory = useMemo(() => {
@@ -80,31 +94,55 @@ export default function StaffProfile() {
     const factors = seededFactors(member.id, months)
     const fSum = factors.reduce((a, b) => a + b, 0) || 1
     const startIdx = 0
-    return factors.map((f, i) => {
-      const revenue = Math.round((member.revenue * (f / fSum)) / 1000) * 1000
-      const target = Math.round((member.target / months / 1000)) * 1000
-      return {
-        month: MONTH_LABELS[(startIdx + i) % 12],
-        revenue,
-        target,
-      }
-    })
-  }, [member])
+    return factors.map((f, i) => ({
+      month: MONTH_LABELS[(startIdx + i) % 12],
+      revenue: Math.round((revenue * (f / fSum)) / 1000) * 1000,
+      target: Math.round(target / months / 1000) * 1000,
+    }))
+  }, [member, revenue, target])
 
+  // Related collections come from the API member payload when present.
   const assignedLeads = useMemo(
-    () => (member ? leads.filter((l) => l.staffId === member.id) : []),
+    () => (member?.assignedLeadsList || member?.recentLeads || []),
     [member],
   )
 
   const wonLeadHistory = useMemo(
-    () => assignedLeads.filter((l) => l.status === 'Won' || l.status === 'Lost'),
-    [assignedLeads],
+    () =>
+      (member?.leadHistory || assignedLeads).filter(
+        (l) => l.status === 'Won' || l.status === 'Lost',
+      ),
+    [member, assignedLeads],
   )
 
-  const incentives = useMemo(
-    () => (member ? incentiveHistory.filter((h) => h.staffId === member.id) : []),
-    [member],
-  )
+  const incentives = useMemo(() => member?.incentives || [], [member])
+
+  // ----- Loading -----
+  const isLoading = !member && (staffStatus === 'loading' || staffStatus === 'idle')
+  if (isLoading) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: 'easeOut' }}
+        className="space-y-6"
+      >
+        <div className="h-9 w-32 animate-pulse rounded-lg bg-surface-muted dark:bg-slate-800" />
+        <div className="card relative overflow-hidden">
+          <div className="h-28 animate-pulse bg-surface-muted dark:bg-slate-800 sm:h-32" />
+          <div className="px-5 pb-5 sm:px-7 sm:pb-7">
+            <div className="-mt-12 h-20 w-20 animate-pulse rounded-full bg-surface-muted ring-4 ring-white dark:bg-slate-800 dark:ring-slate-900 sm:h-24 sm:w-24" />
+            <div className="mt-4 h-6 w-48 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-2xl bg-surface-muted dark:bg-slate-800" />
+          ))}
+        </div>
+      </motion.div>
+    )
+  }
 
   // ----- Not found -----
   if (!member) {
@@ -240,26 +278,45 @@ export default function StaffProfile() {
 
   const incentiveColumns = [
     {
-      key: 'month',
-      header: 'Month',
+      key: 'product',
+      header: 'Product',
       render: (row) => (
-        <span className="font-medium text-ink dark:text-slate-100">{row.month}</span>
+        <span className="font-medium text-ink dark:text-slate-100">{row.product}</span>
+      ),
+    },
+    {
+      key: 'targetQty',
+      header: 'Target',
+      align: 'right',
+      render: (row) => (
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.targetQty)}</span>
+      ),
+    },
+    {
+      key: 'achievedQty',
+      header: 'Achieved',
+      align: 'right',
+      render: (row) => (
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.achievedQty)}</span>
+      ),
+    },
+    {
+      key: 'extraQty',
+      header: 'Extra',
+      align: 'right',
+      render: (row) => (
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.extraQty)}</span>
       ),
     },
     {
       key: 'amount',
-      header: 'Amount',
+      header: 'Incentive',
       align: 'right',
       render: (row) => (
         <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
           {formatCurrency(row.amount)}
         </span>
       ),
-    },
-    {
-      key: 'type',
-      header: 'Type',
-      render: (row) => <Badge tone="violet">{row.type}</Badge>,
     },
     {
       key: 'status',
@@ -293,9 +350,9 @@ export default function StaffProfile() {
         </div>
 
         <div className="px-5 pb-5 sm:px-7 sm:pb-7">
-          <div className="-mt-12 flex flex-col gap-5 sm:-mt-14 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-end">
-              <div className="rounded-full ring-4 ring-white dark:ring-slate-900">
+              <div className="-mt-14 shrink-0 rounded-full ring-4 ring-white dark:ring-slate-900 sm:-mt-16">
                 <Avatar
                   name={member.name}
                   color={member.avatarColor}
@@ -314,8 +371,8 @@ export default function StaffProfile() {
                     withDot
                     size="md"
                   />
-                  <Badge tone={scoreTone(member.performanceScore)} size="md">
-                    {member.performanceScore} pts
+                  <Badge tone={scoreTone(member.performanceScore || 0)} size="md">
+                    {member.performanceScore ?? 0} pts
                   </Badge>
                 </div>
                 <p className="mt-1 text-sm font-medium text-ink-soft dark:text-slate-400">
@@ -329,14 +386,14 @@ export default function StaffProfile() {
                       key={i}
                       className={cn(
                         'h-4 w-4',
-                        i < Math.round(member.rating)
+                        i < Math.round(member.rating || 0)
                           ? 'fill-current'
                           : 'text-ink-faint/40 dark:text-slate-700',
                       )}
                     />
                   ))}
                   <span className="ml-1 text-ink-soft dark:text-slate-400">
-                    {member.rating.toFixed(1)}
+                    {Number(member.rating || 0).toFixed(1)}
                   </span>
                 </div>
               </div>
@@ -355,33 +412,33 @@ export default function StaffProfile() {
 
       {/* Performance KPIs */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <KPICard label="Assigned Leads" value={member.assignedLeads} icon={FiUsers} tone="brand" />
-        <KPICard label="Won Leads" value={member.wonLeads} icon={FiCheckCircle} tone="emerald" />
+        <KPICard label="Assigned Leads" value={member.assignedLeads ?? 0} icon={FiUsers} tone="brand" />
+        <KPICard label="Won Leads" value={member.wonLeads ?? 0} icon={FiCheckCircle} tone="emerald" />
         <KPICard
           label="Conversion Rate"
-          value={member.conversionRate}
+          value={member.conversionRate ?? 0}
           suffix="%"
           icon={FiPercent}
           tone="violet"
         />
         <KPICard
           label="Revenue"
-          value={formatCurrency(member.revenue, { compact: true })}
+          value={formatCurrency(revenue, { compact: true })}
           icon={FiDollarSign}
           tone="sky"
         />
         <KPICard
           label="Incentive Earned"
-          value={formatCurrency(member.incentiveEarned, { compact: true })}
+          value={formatCurrency(member.incentiveEarned || 0, { compact: true })}
           icon={FiAward}
           tone="amber"
         />
         <KPICard
           label="Performance Score"
-          value={member.performanceScore}
+          value={member.performanceScore ?? 0}
           suffix=" pts"
           icon={FiTrendingUp}
-          tone={member.performanceScore >= 70 ? 'emerald' : 'rose'}
+          tone={(member.performanceScore || 0) >= 70 ? 'emerald' : 'rose'}
         />
       </div>
 
@@ -400,8 +457,8 @@ export default function StaffProfile() {
             </p>
           </div>
           <AchievementBadge
-            achieved={member.revenue}
-            target={member.target}
+            achieved={revenue}
+            target={target}
             size="md"
             withLabel
             className="ml-auto"
@@ -415,15 +472,15 @@ export default function StaffProfile() {
               <span
                 className={cn(
                   'font-display text-2xl font-bold',
-                  achievementStyle(member.revenue, member.target).text,
+                  achievementStyle(revenue, target).text,
                 )}
               >
-                {formatPercent(member.achievement, 0)}
+                {formatPercent(member.achievement || 0, 0)}
               </span>
             </div>
             <ProgressBar
-              value={member.achievement}
-              color={achievementStyleFromPct(member.achievement).bar}
+              value={member.achievement || 0}
+              color={achievementStyleFromPct(member.achievement || 0).bar}
               size="lg"
             />
           </div>
@@ -432,13 +489,13 @@ export default function StaffProfile() {
             <MiniStat
               icon={FiDollarSign}
               label="Revenue generated"
-              value={formatCurrency(member.revenue)}
+              value={formatCurrency(revenue)}
               tone="emerald"
             />
             <MiniStat
               icon={FiTarget}
               label="Assigned target"
-              value={formatCurrency(member.target)}
+              value={formatCurrency(target)}
               tone="brand"
             />
           </div>
@@ -513,7 +570,7 @@ export default function StaffProfile() {
             </h3>
             <Badge tone="amber" size="md">
               {formatCurrency(
-                incentives.reduce((s, x) => s + x.amount, 0),
+                incentives.reduce((s, x) => s + (Number(x.amount) || 0), 0),
                 { compact: true },
               )}{' '}
               earned

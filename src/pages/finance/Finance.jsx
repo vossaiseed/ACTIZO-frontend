@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useSelector } from 'react-redux'
+import { useEffect, useState } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
   FiDollarSign,
@@ -11,7 +11,7 @@ import {
   FiBarChart2,
 } from 'react-icons/fi'
 
-import { selectFinance } from '@/redux/slices/financeSlice'
+import { fetchFinance, selectFinance } from '@/redux/slices/financeSlice'
 
 import PageHeader from '@/components/common/PageHeader'
 import Button from '@/components/ui/Button'
@@ -107,13 +107,21 @@ function HealthScoreCard({ score, margin }) {
 /* ------------------------------------------------------------------ */
 
 export default function Finance() {
-  const { kpis, charts } = useSelector(selectFinance)
+  const dispatch = useDispatch()
+  const { kpis, charts, status } = useSelector(selectFinance)
   const toast = useToast()
 
   const [period, setPeriod] = useState('h1-2026')
-  const [loading] = useState(false)
 
-  const { revenueVsExpense } = charts
+  // Loading is driven by the fetch status (idle until the first request resolves).
+  const loading = status === 'loading' || status === 'idle'
+
+  // Fetch the live finance overview + charts on mount.
+  useEffect(() => {
+    dispatch(fetchFinance())
+  }, [dispatch])
+
+  const revenueVsExpense = charts.revenueVsExpense || []
 
   const profitPositive = kpis.profit >= 0
 
@@ -185,21 +193,18 @@ export default function Finance() {
             <KPICard
               label="Total Revenue"
               value={formatCurrency(kpis.revenue, { compact: true })}
-              delta={12.6}
               icon={FiDollarSign}
               tone="brand"
             />
             <KPICard
               label="Expenses"
               value={formatCurrency(kpis.expenses, { compact: true })}
-              delta={4.8}
               icon={FiTrendingDown}
               tone="amber"
             />
             <KPICard
               label="Profit & Loss"
               value={formatCurrency(kpis.profit, { compact: true })}
-              delta={profitPositive ? 9.2 : -9.2}
               deltaSuffix={`${formatPercent(kpis.profitMargin)} margin`}
               icon={profitPositive ? FiTrendingUp : FiTrendingDown}
               tone={profitPositive ? 'emerald' : 'rose'}

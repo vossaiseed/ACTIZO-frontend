@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useDispatch, useSelector } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
   FiArrowLeft,
@@ -19,22 +20,27 @@ import {
   FiAward,
   FiActivity,
   FiArrowUpRight,
+  FiEdit3,
 } from 'react-icons/fi'
 
 import { cn } from '@/utils/cn'
 import { formatCurrency, formatNumber, formatPercent } from '@/utils/format'
-import { sum } from '@/utils/helpers'
 import { achievementStyleFromPct } from '@/utils/achievement'
-
-import { branchById } from '@/data/branches'
-import { staffByBranch } from '@/data/staff'
-import { leads } from '@/data/leads'
-import { sales } from '@/data/sales'
-import { generalTargets } from '@/data/targets'
 import { MONTHS } from '@/data/_helpers'
+
+import {
+  fetchBranch,
+  updateBranch,
+  selectBranchById,
+  selectBranchStatus,
+} from '@/redux/slices/branchSlice'
+import { selectRoleKey } from '@/redux/slices/authSlice'
+import { useToast } from '@/hooks/useToast'
 
 import PageHeader from '@/components/common/PageHeader'
 import Button from '@/components/ui/Button'
+import Modal from '@/components/overlay/Modal'
+import Input from '@/components/ui/Input'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -45,6 +51,7 @@ import KPICard from '@/components/cards/KPICard'
 import ChartCard from '@/components/cards/ChartCard'
 import DataTable from '@/components/data/DataTable'
 import EmptyState from '@/components/feedback/EmptyState'
+import Loader from '@/components/feedback/Loader'
 import { AreaChartView } from '@/components/charts'
 
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
@@ -82,49 +89,83 @@ function InfoRow({ icon: Icon, label, children }) {
 export default function BranchDetails() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const dispatch = useDispatch()
 
-  const branch = id ? branchById(id) : null
+  const branch = useSelector(selectBranchById(id))
+  const branchStatus = useSelector(selectBranchStatus)
+  const roleKey = useSelector(selectRoleKey)
+  const toast = useToast()
+  const [targetOpen, setTargetOpen] = useState(false)
+  const canManage = roleKey === 'admin' || roleKey === 'branch_manager'
 
-  /* ---- Derived data (hooks must run unconditionally) ---- */
-  const branchStaff = useMemo(() => (branch ? staffByBranch(branch.id) : []), [branch])
+  // Fetch the full branch (with nested `stats`) on mount / id change.
+  useEffect(() => {
+    if (id) dispatch(fetchBranch(id))
+  }, [dispatch, id])
 
-  const branchLeads = useMemo(
-    () => (branch ? leads.filter((l) => l.branchId === branch.id) : []),
-    [branch],
-  )
+  const handleSaveTarget = async ({ targetRevenue, monthlyTarget }) => {
+    try {
+      await dispatch(
+        updateBranch({
+          id,
+          targetRevenue: Number(targetRevenue) || 0,
+          monthlyTarget: Number(monthlyTarget) || 0,
+        }),
+      ).unwrap()
+      dispatch(fetchBranch(id))
+      toast.success('Branch target updated.', { title: 'Target saved' })
+      setTargetOpen(false)
+    } catch (e) {
+      toast.error(typeof e === 'string' ? e : 'Could not update target.')
+    }
+  }
 
-  const branchSalesRows = useMemo(
-    () => (branch ? sales.filter((s) => s.branchId === branch.id) : []),
-    [branch],
-  )
+  // Backend detail payload provides a nested `stats` object:
+  //   { staffCount, totalLeads, totalSales, revenue }
+  const stats = branch?.stats || {}
+  const staffCount = stats.staffCount ?? branch?.staffCount ?? 0
+  const totalLeads = stats.totalLeads ?? branch?.totalLeads ?? 0
+  const totalSales = stats.totalSales ?? branch?.totalSales ?? 0
+  const revenue = stats.revenue ?? branch?.totalRevenue ?? 0
 
-  const revenueGenerated = useMemo(
-    () => sum(branchSalesRows.filter((s) => s.status === 'Completed'), 'amount'),
-    [branchSalesRows],
-  )
+  // Analytics the page renders but the backend doesn't currently provide.
+  const targetAchievement = branch?.targetAchievement || 0
+  const targetRevenue = branch?.targetRevenue || 0
+  const monthlyRevenue = branch?.monthlyRevenue || 0
+  const monthlyTarget = targetRevenue ? Math.round(targetRevenue / 12) : 0
+  const wonLeads = branch?.wonLeads ?? 0
 
-  const branchTargets = useMemo(
-    () =>
-      branch
-        ? generalTargets.filter((t) => t.branchId === branch.id || t.scope === 'Admin')
-        : [],
-    [branch],
-  )
+  // Nested collections may or may not be present on the detail payload — fall
+  // back to empty arrays so the staff/targets sections render an empty state
+  // rather than crash. (No data is invented.)
+  const branchStaff = useMemo(() => branch?.staff || [], [branch])
+  const branchTargets = useMemo(() => branch?.targets || [], [branch])
+  const salesRecords = stats.totalSales ?? 0
 
-  // Synthesize a smooth monthly revenue series anchored on the branch's
-  // monthlyRevenue so each branch shows a believable 8-month trend.
-  const revenueTrend = useMemo(() => {
-    if (!branch) return []
-    const window = MONTHS.slice(-8) // Jun ... last 8 calendar months
-    const base = branch.monthlyRevenue
-    return window.map((m, i) => {
-      const factor = 0.72 + i * 0.05 + (i % 2 ? 0.04 : -0.02)
-      return {
-        month: m,
-        revenue: Math.round((base * factor) / 1000) * 1000,
-      }
-    })
-  }, [branch])
+  // Real last-8-months revenue trend computed by the backend from actual sales.
+  const revenueTrend = branch?.revenueTrend || []
+
+  /* ---- Loading ---- */
+  if (!branch && (branchStatus === 'loading' || branchStatus === 'idle')) {
+    return (
+      <motion.div {...pageMotion} className="space-y-6">
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={<FiArrowLeft />}
+          onClick={() => navigate('/branches')}
+          className="-ml-1"
+        >
+          Back to Branches
+        </Button>
+        <Card padding="lg">
+          <div className="flex items-center justify-center py-20">
+            <Loader size="lg" label="Loading branch…" />
+          </div>
+        </Card>
+      </motion.div>
+    )
+  }
 
   /* ---- Not found ---- */
   if (!branch) {
@@ -154,9 +195,6 @@ export default function BranchDetails() {
       </motion.div>
     )
   }
-
-  const wonLeads = branchLeads.filter((l) => l.status === 'Won').length
-  const monthlyTarget = Math.round(branch.targetRevenue / 12)
 
   /* ---- Staff table columns ---- */
   const staffColumns = [
@@ -189,7 +227,7 @@ export default function BranchDetails() {
       header: 'Leads',
       sortable: true,
       align: 'right',
-      render: (s) => formatNumber(s.assignedLeads),
+      render: (s) => formatNumber(s.assignedLeads || 0),
     },
     {
       key: 'revenue',
@@ -198,7 +236,7 @@ export default function BranchDetails() {
       align: 'right',
       render: (s) => (
         <span className="font-semibold text-ink dark:text-slate-100">
-          {formatCurrency(s.revenue, { compact: true })}
+          {formatCurrency(s.revenue || 0, { compact: true })}
         </span>
       ),
     },
@@ -207,16 +245,19 @@ export default function BranchDetails() {
       header: 'Achievement',
       sortable: true,
       width: 170,
-      render: (s) => (
-        <div className="min-w-[130px]">
-          <div className="mb-1 flex items-center justify-between text-xs">
-            <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(s.achievement).text)}>
-              {formatPercent(s.achievement)}
-            </span>
+      render: (s) => {
+        const pct = s.achievement || 0
+        return (
+          <div className="min-w-[130px]">
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(pct).text)}>
+                {formatPercent(pct)}
+              </span>
+            </div>
+            <ProgressBar value={pct} color={achievementStyleFromPct(pct).bar} size="sm" />
           </div>
-          <ProgressBar value={s.achievement} color={achievementStyleFromPct(s.achievement).bar} size="sm" />
-        </div>
-      ),
+        )
+      },
     },
   ]
 
@@ -252,12 +293,12 @@ export default function BranchDetails() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard label="Staff Count" value={branch.staffCount} icon={FiUsers} tone="brand" />
-        <KPICard label="Total Leads" value={branch.totalLeads} icon={FiZap} tone="sky" />
-        <KPICard label="Total Sales" value={branch.totalSales} icon={FiShoppingBag} tone="violet" />
+        <KPICard label="Staff Count" value={staffCount} icon={FiUsers} tone="brand" />
+        <KPICard label="Total Leads" value={totalLeads} icon={FiZap} tone="sky" />
+        <KPICard label="Total Sales" value={totalSales} icon={FiShoppingBag} tone="violet" />
         <KPICard
           label="Revenue Generated"
-          value={formatCurrency(revenueGenerated || branch.totalRevenue, { compact: true })}
+          value={formatCurrency(revenue, { compact: true })}
           icon={FiDollarSign}
           tone="emerald"
         />
@@ -275,29 +316,37 @@ export default function BranchDetails() {
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <InfoRow icon={FiUser} label="Branch Manager">
-                {branch.manager}
+                {branch.manager || '—'}
               </InfoRow>
               <InfoRow icon={FiHash} label="Branch Code">
                 <span className="font-mono">{branch.code}</span>
               </InfoRow>
               <InfoRow icon={FiPhone} label="Phone">
-                <a href={`tel:${branch.phone}`} className="hover:text-brand-600 dark:hover:text-brand-300">
-                  {branch.phone}
-                </a>
+                {branch.phone ? (
+                  <a href={`tel:${branch.phone}`} className="hover:text-brand-600 dark:hover:text-brand-300">
+                    {branch.phone}
+                  </a>
+                ) : (
+                  '—'
+                )}
               </InfoRow>
               <InfoRow icon={FiMail} label="Email">
-                <a
-                  href={`mailto:${branch.email}`}
-                  className="hover:text-brand-600 dark:hover:text-brand-300"
-                >
-                  {branch.email}
-                </a>
+                {branch.email ? (
+                  <a
+                    href={`mailto:${branch.email}`}
+                    className="hover:text-brand-600 dark:hover:text-brand-300"
+                  >
+                    {branch.email}
+                  </a>
+                ) : (
+                  '—'
+                )}
               </InfoRow>
               <InfoRow icon={FiMapPin} label="Address">
-                {branch.address}
+                {branch.address || '—'}
               </InfoRow>
               <InfoRow icon={FiCalendar} label="Established">
-                {branch.established}
+                {branch.established || '—'}
               </InfoRow>
             </div>
           </Card>
@@ -309,15 +358,23 @@ export default function BranchDetails() {
             icon={FiTrendingUp}
             height={300}
           >
-            <AreaChartView
-              data={revenueTrend}
-              xKey="month"
-              dataKey="revenue"
-              name="Revenue"
-              color="#36bab3"
-              height={300}
-              tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
-            />
+            {revenueTrend.length ? (
+              <AreaChartView
+                data={revenueTrend}
+                xKey="month"
+                dataKey="revenue"
+                name="Revenue"
+                color="#36bab3"
+                height={300}
+                tooltipFormatter={(v) => formatCurrency(v, { compact: true })}
+              />
+            ) : (
+              <EmptyState
+                icon={FiTrendingUp}
+                title="No revenue data"
+                description="Monthly revenue for this branch is not available yet."
+              />
+            )}
           </ChartCard>
 
           {/* Staff of branch */}
@@ -357,18 +414,18 @@ export default function BranchDetails() {
                   Target Achievement
                 </span>
               </div>
-              <span className={cn('font-display text-2xl font-bold', achievementStyleFromPct(branch.targetAchievement).text)}>
-                {branch.targetAchievement}%
+              <span className={cn('font-display text-2xl font-bold', achievementStyleFromPct(targetAchievement).text)}>
+                {targetAchievement}%
               </span>
             </div>
             <ProgressBar
-              value={branch.targetAchievement}
-              color={achievementStyleFromPct(branch.targetAchievement).bar}
+              value={targetAchievement}
+              color={achievementStyleFromPct(targetAchievement).bar}
               size="lg"
               className="relative mt-4"
             />
             <div className="relative mt-3">
-              <AchievementBadge pct={branch.targetAchievement} size="md" withLabel />
+              <AchievementBadge pct={targetAchievement} size="md" withLabel />
             </div>
             <div className="relative mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-xl bg-surface-muted/70 px-3 py-2.5 ring-1 ring-line/60 dark:bg-slate-800/50 dark:ring-slate-700/50">
@@ -376,7 +433,7 @@ export default function BranchDetails() {
                   Target Revenue
                 </p>
                 <p className="mt-0.5 font-display text-sm font-bold text-ink dark:text-slate-100">
-                  {formatCurrency(branch.targetRevenue, { compact: true })}
+                  {formatCurrency(targetRevenue, { compact: true })}
                 </p>
               </div>
               <div className="rounded-xl bg-surface-muted/70 px-3 py-2.5 ring-1 ring-line/60 dark:bg-slate-800/50 dark:ring-slate-700/50">
@@ -384,10 +441,22 @@ export default function BranchDetails() {
                   Total Revenue
                 </p>
                 <p className="mt-0.5 font-display text-sm font-bold text-ink dark:text-slate-100">
-                  {formatCurrency(branch.totalRevenue, { compact: true })}
+                  {formatCurrency(revenue, { compact: true })}
                 </p>
               </div>
             </div>
+            {canManage && (
+              <Button
+                variant="outline"
+                size="sm"
+                fullWidth
+                leftIcon={<FiEdit3 />}
+                className="relative mt-4"
+                onClick={() => setTargetOpen(true)}
+              >
+                Edit Target
+              </Button>
+            )}
           </Card>
 
           {/* Snapshot stats */}
@@ -397,7 +466,7 @@ export default function BranchDetails() {
               <SnapshotRow
                 icon={FiDollarSign}
                 label="Monthly Revenue"
-                value={formatCurrency(branch.monthlyRevenue, { compact: true })}
+                value={formatCurrency(monthlyRevenue, { compact: true })}
                 tone="brand"
               />
               <SnapshotRow
@@ -409,7 +478,7 @@ export default function BranchDetails() {
               <SnapshotRow
                 icon={FiShoppingBag}
                 label="Sales Records"
-                value={formatNumber(branchSalesRows.length)}
+                value={formatNumber(salesRecords)}
                 tone="sky"
               />
             </ul>
@@ -445,13 +514,13 @@ export default function BranchDetails() {
                     <div className="mt-2.5">
                       <div className="mb-1 flex items-center justify-between text-xs">
                         <span className="text-ink-soft dark:text-slate-400">
-                          {formatNumber(t.achievedQty)} / {formatNumber(t.targetQty)} {t.unit}
+                          {formatNumber(t.achievedQty || 0)} / {formatNumber(t.targetQty || 0)} {t.unit}
                         </span>
-                        <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(t.completion).text)}>
-                          {formatPercent(t.completion)}
+                        <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(t.completion || 0).text)}>
+                          {formatPercent(t.completion || 0)}
                         </span>
                       </div>
-                      <ProgressBar value={t.completion} color={achievementStyleFromPct(t.completion).bar} size="sm" />
+                      <ProgressBar value={t.completion || 0} color={achievementStyleFromPct(t.completion || 0).bar} size="sm" />
                     </div>
                   </div>
                 ))}
@@ -475,7 +544,79 @@ export default function BranchDetails() {
           </Card>
         </aside>
       </div>
+
+      <EditTargetModal
+        open={targetOpen}
+        branch={branch}
+        onClose={() => setTargetOpen(false)}
+        onSave={handleSaveTarget}
+      />
     </motion.div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit Branch Target modal                                            */
+/* ------------------------------------------------------------------ */
+function EditTargetModal({ open, branch, onClose, onSave }) {
+  const [targetRevenue, setTargetRevenue] = useState('')
+  const [monthlyTarget, setMonthlyTarget] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setTargetRevenue(branch?.targetRevenue ?? '')
+      setMonthlyTarget(branch?.monthlyTarget ?? '')
+    }
+  }, [open, branch])
+
+  const submit = async (e) => {
+    e?.preventDefault?.()
+    setSaving(true)
+    await onSave({ targetRevenue, monthlyTarget })
+    setSaving(false)
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Edit Branch Target"
+      description={`Set the revenue target for ${branch?.name || 'this branch'}.`}
+      size="sm"
+      footer={
+        <>
+          <Button variant="outline" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="branch-target-form" loading={saving} leftIcon={<FiTarget />}>
+            Save Target
+          </Button>
+        </>
+      }
+    >
+      <form id="branch-target-form" onSubmit={submit} className="space-y-4">
+        <Input
+          label="Annual Target Revenue (₹)"
+          type="number"
+          min="0"
+          step="10000"
+          value={targetRevenue}
+          onChange={(e) => setTargetRevenue(e.target.value)}
+          placeholder="e.g. 16000000"
+        />
+        <Input
+          label="Monthly Target (₹)"
+          type="number"
+          min="0"
+          step="10000"
+          value={monthlyTarget}
+          onChange={(e) => setMonthlyTarget(e.target.value)}
+          placeholder="e.g. 1340000"
+          hint="Optional"
+        />
+      </form>
+    </Modal>
   )
 }
 

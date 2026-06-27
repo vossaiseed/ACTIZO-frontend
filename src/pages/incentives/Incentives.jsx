@@ -1,25 +1,30 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
   FiAward,
   FiDollarSign,
   FiTrendingUp,
-  FiCalendar,
-  FiZap,
+  FiUsers,
   FiBarChart2,
-  FiLayers,
-  FiGift,
+  FiPackage,
   FiDownload,
   FiChevronDown,
   FiFilter,
   FiRefreshCw,
   FiClock,
   FiStar,
-  FiPercent,
 } from 'react-icons/fi'
 
-import { selectIncentives, setFilter, resetFilters, setPage } from '@/redux/slices/incentiveSlice'
+import {
+  selectIncentives,
+  setFilter,
+  resetFilters,
+  setPage,
+  fetchIncentives,
+  fetchIncentiveHistory,
+  fetchIncentiveSummary,
+} from '@/redux/slices/incentiveSlice'
 
 import PageHeader from '@/components/common/PageHeader'
 import SearchBar from '@/components/common/SearchBar'
@@ -43,32 +48,23 @@ import { exportData } from '@/utils/export'
 /* Static option helpers                                              */
 /* ------------------------------------------------------------------ */
 
+// Incentives are computed: a staff has "Earned" once they exceed their target, else "Active".
 const STATUS_OPTIONS = [
   { value: 'All', label: 'All Statuses' },
-  { value: 'Paid', label: 'Paid' },
-  { value: 'Pending', label: 'Pending' },
+  { value: 'Earned', label: 'Earned' },
+  { value: 'Active', label: 'Active' },
 ]
 
-const TYPE_OPTIONS = [
-  { value: 'All', label: 'All Types' },
-  { value: 'Monthly', label: 'Monthly' },
-  { value: 'Special', label: 'Special' },
-  { value: 'Project', label: 'Project' },
-]
-
-// Incentive rows only carry `branchName`, so build branch options from the data.
+// Rows only carry `branchName`, so build branch options from the data.
 const buildBranchOptions = (items) => [
   { value: 'All', label: 'All Branches' },
-  ...[...new Set(items.map((i) => i.branchName))].sort().map((b) => ({ value: b, label: b })),
+  ...[...new Set(items.map((i) => i.branchName))].filter(Boolean).sort().map((b) => ({ value: b, label: b })),
 ]
 
-// Search across the incentive rows.
-const SEARCH_KEYS = ['id', 'staffName', 'branchName', 'month', 'type', 'status']
+const SEARCH_KEYS = ['staffName', 'branchName', 'productName', 'status']
+const FILTER_MAP = { branch: 'branchName', status: 'status' }
 
-// Filter key -> item key map for applyFilters. ('search'/'month' handled separately.)
-const FILTER_MAP = { branch: 'branchName', status: 'status', type: 'type' }
-
-// Gradient fallbacks for avatars (incentive rows carry avatarColor; history rows do not).
+// Gradient fallbacks for avatars without a stored color.
 const AVATAR_GRADIENTS = [
   'from-brand-400 to-brand-600',
   'from-violet-400 to-violet-600',
@@ -82,12 +78,6 @@ const AVATAR_GRADIENTS = [
 const gradientFor = (name = '') =>
   AVATAR_GRADIENTS[(name.charCodeAt(0) || 0) % AVATAR_GRADIENTS.length]
 
-const TYPE_ICON = {
-  Monthly: FiCalendar,
-  Special: FiZap,
-  Project: FiLayers,
-}
-
 /* ------------------------------------------------------------------ */
 /* Top Performer highlight card (gradient / glass)                    */
 /* ------------------------------------------------------------------ */
@@ -95,16 +85,19 @@ const TYPE_ICON = {
 function TopPerformerCard({ performer }) {
   if (!performer) {
     return (
-      <div className="card flex items-center justify-center p-6">
+      <div className="card flex items-center justify-center p-6 sm:col-span-2 lg:col-span-1">
         <EmptyState
           icon={FiAward}
           title="No top performer"
-          description="Top earner will appear here once incentives are recorded."
+          description="Top earner appears here once a staff member exceeds their target."
           className="py-4"
         />
       </div>
     )
   }
+
+  const displayName = performer.name || performer.staffName || '—'
+  const branch = performer.branchName || ''
 
   return (
     <motion.div
@@ -114,7 +107,6 @@ function TopPerformerCard({ performer }) {
       whileHover={{ y: -3 }}
       className="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-500 via-brand-600 to-brand-700 p-5 text-white shadow-glow ring-1 ring-white/10 sm:col-span-2 lg:col-span-1"
     >
-      {/* ambient shapes */}
       <div
         aria-hidden
         className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/15 blur-2xl"
@@ -136,32 +128,22 @@ function TopPerformerCard({ performer }) {
 
       <div className="relative mt-4 flex items-center gap-3.5">
         <Avatar
-          name={performer.staffName}
-          color={performer.avatarColor || gradientFor(performer.staffName)}
+          name={displayName}
+          color={performer.avatarColor || gradientFor(displayName)}
           size="lg"
           className="ring-white/40"
         />
         <div className="min-w-0">
-          <p className="truncate font-display text-lg font-bold leading-tight">
-            {performer.staffName}
-          </p>
-          <p className="truncate text-sm text-white/80">{performer.branchName}</p>
+          <p className="truncate font-display text-lg font-bold leading-tight">{displayName}</p>
+          {branch && <p className="truncate text-sm text-white/80">{branch}</p>}
         </div>
       </div>
 
-      <div className="relative mt-4 flex items-end justify-between gap-3">
-        <div>
-          <p className="text-2xs font-medium uppercase tracking-wider text-white/70">
-            Total Earned
-          </p>
-          <p className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-            {formatCurrency(performer.total)}
-          </p>
-        </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-xs font-semibold backdrop-blur-sm">
-          <FiPercent className="h-3 w-3" />
-          {performer.incentiveRate}%
-        </span>
+      <div className="relative mt-4">
+        <p className="text-2xs font-medium uppercase tracking-wider text-white/70">Total Earned</p>
+        <p className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+          {formatCurrency(performer.total)}
+        </p>
       </div>
     </motion.div>
   )
@@ -173,11 +155,17 @@ function TopPerformerCard({ performer }) {
 
 export default function Incentives() {
   const dispatch = useDispatch()
-  const { items, history, summary, filters, page, pageSize } = useSelector(selectIncentives)
+  const { items, history, summary, filters, page, pageSize, status } = useSelector(selectIncentives)
 
-  // Local sort (this slice has no sort state) + simulated load flag for skeletons.
-  const [sort, setSort] = useState({ key: 'total', dir: 'desc' })
-  const [loading] = useState(false)
+  const [sort, setSort] = useState({ key: 'amount', dir: 'desc' })
+  const loading = status === 'loading' || status === 'idle'
+
+  // Load computed incentives + breakdown + summary (role-scoped on the backend).
+  useEffect(() => {
+    dispatch(fetchIncentives())
+    dispatch(fetchIncentiveHistory())
+    dispatch(fetchIncentiveSummary())
+  }, [dispatch])
 
   const branchOptions = useMemo(() => buildBranchOptions(items), [items])
 
@@ -191,11 +179,10 @@ export default function Incentives() {
   const totalRows = filtered.length
   const pageRows = useMemo(() => paginate(filtered, page, pageSize), [filtered, page, pageSize])
 
-  /* ----- History pipeline (search + filters only, capped) ----- */
-  const historyRows = useMemo(() => {
+  /* ----- Breakdown pipeline (search + filters only) ----- */
+  const breakdownRows = useMemo(() => {
     const searched = searchData(history, filters.search, SEARCH_KEYS)
-    const byFilters = applyFilters(searched, filters, FILTER_MAP)
-    return sortData(byFilters, 'month', 'desc').slice(0, 12)
+    return applyFilters(searched, filters, FILTER_MAP)
   }, [history, filters])
 
   /* ----- Handlers ----- */
@@ -208,23 +195,16 @@ export default function Incentives() {
   const handlePage = (n) => dispatch(setPage(n))
 
   const hasActiveFilters =
-    filters.search ||
-    filters.branch !== 'All' ||
-    filters.status !== 'All' ||
-    filters.type !== 'All'
+    filters.search || filters.branch !== 'All' || filters.status !== 'All'
 
   /* ----- Export ----- */
   const exportColumns = [
-    { key: 'id', label: 'Incentive ID' },
     { key: 'staffName', label: 'Staff' },
     { key: 'branchName', label: 'Branch' },
-    { key: 'month', label: 'Month' },
-    { key: 'baseSales', label: 'Base Sales (AED)' },
-    { key: 'incentiveRate', label: 'Rate (%)' },
+    { key: 'targetQty', label: 'Target (units)' },
+    { key: 'achievedQty', label: 'Achieved (units)' },
+    { key: 'extraQty', label: 'Extra (units)' },
     { key: 'amount', label: 'Incentive (AED)' },
-    { key: 'bonus', label: 'Bonus (AED)' },
-    { key: 'total', label: 'Total (AED)' },
-    { key: 'type', label: 'Type' },
     { key: 'status', label: 'Status' },
   ]
 
@@ -236,7 +216,7 @@ export default function Incentives() {
     { label: 'Export as PDF', icon: <FiDownload />, onClick: () => runExport('pdf') },
   ]
 
-  /* ----- Incentive List columns ----- */
+  /* ----- Incentive List columns (per staff) ----- */
   const columns = [
     {
       key: 'staffName',
@@ -244,15 +224,8 @@ export default function Incentives() {
       sortable: true,
       render: (row) => (
         <div className="flex items-center gap-2.5">
-          <Avatar
-            name={row.staffName}
-            size="sm"
-            color={row.avatarColor || gradientFor(row.staffName)}
-          />
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink dark:text-slate-100">{row.staffName}</p>
-            <p className="truncate text-xs text-ink-faint dark:text-slate-500">{row.id}</p>
-          </div>
+          <Avatar name={row.staffName} size="sm" color={row.avatarColor || gradientFor(row.staffName)} />
+          <p className="truncate font-medium text-ink dark:text-slate-100">{row.staffName}</p>
         </div>
       ),
     },
@@ -265,34 +238,36 @@ export default function Incentives() {
       ),
     },
     {
-      key: 'month',
-      header: 'Month',
-      sortable: true,
-      render: (row) => (
-        <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">{row.month}</span>
-      ),
-    },
-    {
-      key: 'baseSales',
-      header: 'Base Sales',
+      key: 'targetQty',
+      header: 'Target',
       sortable: true,
       align: 'right',
       render: (row) => (
-        <span className="tabular-nums text-ink-soft dark:text-slate-300">
-          {formatCurrency(row.baseSales)}
-        </span>
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.targetQty)}</span>
       ),
     },
     {
-      key: 'incentiveRate',
-      header: 'Rate',
+      key: 'achievedQty',
+      header: 'Achieved',
       sortable: true,
       align: 'right',
       render: (row) => (
-        <span className="inline-flex items-center gap-0.5 rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
-          {row.incentiveRate}%
-        </span>
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.achievedQty)}</span>
       ),
+    },
+    {
+      key: 'extraQty',
+      header: 'Extra Units',
+      sortable: true,
+      align: 'right',
+      render: (row) =>
+        row.extraQty > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
+            +{formatNumber(row.extraQty)}
+          </span>
+        ) : (
+          <span className="text-ink-faint dark:text-slate-600">—</span>
+        ),
     },
     {
       key: 'amount',
@@ -300,50 +275,10 @@ export default function Incentives() {
       sortable: true,
       align: 'right',
       render: (row) => (
-        <span className="tabular-nums text-ink dark:text-slate-200">
+        <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
           {formatCurrency(row.amount)}
         </span>
       ),
-    },
-    {
-      key: 'bonus',
-      header: 'Bonus',
-      sortable: true,
-      align: 'right',
-      render: (row) =>
-        row.bonus > 0 ? (
-          <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums text-emerald-600 dark:text-emerald-400">
-            <FiGift className="h-3.5 w-3.5" />
-            {formatCurrency(row.bonus)}
-          </span>
-        ) : (
-          <span className="text-ink-faint dark:text-slate-600">—</span>
-        ),
-    },
-    {
-      key: 'total',
-      header: 'Total',
-      sortable: true,
-      align: 'right',
-      render: (row) => (
-        <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
-          {formatCurrency(row.total)}
-        </span>
-      ),
-    },
-    {
-      key: 'type',
-      header: 'Type',
-      sortable: true,
-      render: (row) => {
-        const Icon = TYPE_ICON[row.type] || FiCalendar
-        return (
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-soft dark:text-slate-300">
-            <Icon className="h-3.5 w-3.5 text-ink-faint dark:text-slate-500" />
-            {row.type}
-          </span>
-        )
-      },
     },
     {
       key: 'status',
@@ -353,14 +288,14 @@ export default function Incentives() {
     },
   ]
 
-  /* ----- Incentive History columns ----- */
-  const historyColumns = [
+  /* ----- Breakdown columns (per product target) ----- */
+  const breakdownColumns = [
     {
       key: 'staffName',
       header: 'Staff',
       render: (row) => (
         <div className="flex items-center gap-2.5">
-          <Avatar name={row.staffName} size="sm" color={gradientFor(row.staffName)} />
+          <Avatar name={row.staffName} size="sm" color={row.avatarColor || gradientFor(row.staffName)} />
           <span className="font-medium text-ink dark:text-slate-100">{row.staffName}</span>
         </div>
       ),
@@ -373,39 +308,52 @@ export default function Incentives() {
       ),
     },
     {
-      key: 'month',
-      header: 'Month',
+      key: 'productName',
+      header: 'Product',
       render: (row) => (
-        <span className="whitespace-nowrap text-ink-soft dark:text-slate-400">{row.month}</span>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-soft dark:text-slate-300">
+          <FiPackage className="h-3.5 w-3.5 text-ink-faint dark:text-slate-500" />
+          {row.productName}
+        </span>
+      ),
+    },
+    {
+      key: 'targetQty',
+      header: 'Target',
+      align: 'right',
+      render: (row) => <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.targetQty)}</span>,
+    },
+    {
+      key: 'achievedQty',
+      header: 'Achieved',
+      align: 'right',
+      render: (row) => <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.achievedQty)}</span>,
+    },
+    {
+      key: 'extraQty',
+      header: 'Extra',
+      align: 'right',
+      render: (row) => (
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatNumber(row.extraQty)}</span>
+      ),
+    },
+    {
+      key: 'rate',
+      header: 'Rate / unit',
+      align: 'right',
+      render: (row) => (
+        <span className="tabular-nums text-ink-soft dark:text-slate-300">{formatCurrency(row.rate)}</span>
       ),
     },
     {
       key: 'amount',
-      header: 'Amount',
+      header: 'Incentive',
       align: 'right',
       render: (row) => (
         <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
           {formatCurrency(row.amount)}
         </span>
       ),
-    },
-    {
-      key: 'type',
-      header: 'Type',
-      render: (row) => {
-        const Icon = TYPE_ICON[row.type] || FiCalendar
-        return (
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-soft dark:text-slate-300">
-            <Icon className="h-3.5 w-3.5 text-ink-faint dark:text-slate-500" />
-            {row.type}
-          </span>
-        )
-      },
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      render: (row) => <StatusBadge status={row.status} withDot />,
     },
   ]
 
@@ -431,7 +379,7 @@ export default function Incentives() {
     >
       <PageHeader
         title="Incentives"
-        subtitle="Track earned incentives, bonuses, and payouts across staff and branches."
+        subtitle="Auto-calculated from staff targets and completed sales — extra units sold beyond target × rate."
         icon={FiAward}
         actions={headerActions}
       />
@@ -450,23 +398,19 @@ export default function Incentives() {
             <KPICard
               label="Total Incentives"
               value={formatCurrency(summary.totalIncentives, { compact: true })}
-              delta={11.2}
               icon={FiDollarSign}
               tone="brand"
             />
             <KPICard
               label="Highest Incentive"
               value={formatCurrency(summary.highestIncentive, { compact: true })}
-              delta={4.7}
               icon={FiTrendingUp}
               tone="emerald"
             />
             <KPICard
-              label="Monthly Incentive"
-              value={formatCurrency(summary.monthlyIncentive, { compact: true })}
-              delta={6.5}
-              deltaSuffix="this month"
-              icon={FiCalendar}
+              label="Staff Earning"
+              value={`${formatNumber(summary.earningStaff || 0)} / ${formatNumber(summary.staffCount || 0)}`}
+              icon={FiUsers}
               tone="violet"
             />
             <TopPerformerCard performer={summary.topPerformer} />
@@ -487,7 +431,7 @@ export default function Incentives() {
                   Incentive List
                 </h3>
                 <p className="mt-0.5 text-sm text-ink-soft dark:text-slate-400">
-                  {formatNumber(totalRows)} record{totalRows === 1 ? '' : 's'}
+                  {formatNumber(totalRows)} staff
                   {hasActiveFilters ? ' (filtered)' : ''}
                 </p>
               </div>
@@ -507,11 +451,11 @@ export default function Incentives() {
 
           {/* Toolbar: search + filters */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-            <div className="md:col-span-5">
+            <div className="md:col-span-6">
               <SearchBar
                 value={filters.search}
                 onChange={handleSearch}
-                placeholder="Search staff, branch, month…"
+                placeholder="Search staff, branch…"
               />
             </div>
             <div className="md:col-span-3">
@@ -522,20 +466,12 @@ export default function Incentives() {
                 aria-label="Filter by branch"
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="md:col-span-3">
               <Select
                 options={STATUS_OPTIONS}
                 value={filters.status}
                 onChange={handleFilter('status')}
                 aria-label="Filter by status"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <Select
-                options={TYPE_OPTIONS}
-                value={filters.type}
-                onChange={handleFilter('type')}
-                aria-label="Filter by type"
               />
             </div>
           </div>
@@ -550,24 +486,19 @@ export default function Incentives() {
             onSort={handleSort}
             rowKey={(row) => row.id}
             emptyIcon={FiFilter}
-            emptyTitle="No incentives found"
-            emptyDescription="No incentives match your current search and filters. Try clearing them to see all records."
+            emptyTitle="No incentives yet"
+            emptyDescription="Incentives appear automatically when a staff member's sales exceed their assigned target."
           />
         </div>
 
         {totalRows > 0 && (
           <div className="mt-5">
-            <Pagination
-              page={page}
-              pageSize={pageSize}
-              total={totalRows}
-              onPageChange={handlePage}
-            />
+            <Pagination page={page} pageSize={pageSize} total={totalRows} onPageChange={handlePage} />
           </div>
         )}
       </Card>
 
-      {/* ---------------- Incentive History table ---------------- */}
+      {/* ---------------- Incentive Breakdown (per product target) ---------------- */}
       <Card padding="md" className="flex flex-col">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-400/20">
@@ -575,10 +506,10 @@ export default function Incentives() {
           </span>
           <div>
             <h3 className="text-base font-display font-semibold text-ink dark:text-slate-100">
-              Incentive History
+              Incentive Breakdown
             </h3>
             <p className="mt-0.5 text-sm text-ink-soft dark:text-slate-400">
-              Recent payout records across all staff
+              Per-product target vs achieved for each staff member
               {hasActiveFilters ? ' (filtered)' : ''}
             </p>
           </div>
@@ -586,13 +517,13 @@ export default function Incentives() {
 
         <div className="mt-5">
           <DataTable
-            columns={historyColumns}
-            data={historyRows}
+            columns={breakdownColumns}
+            data={breakdownRows}
             loading={loading}
             rowKey={(row) => row.id}
             emptyIcon={FiClock}
-            emptyTitle="No history records"
-            emptyDescription="Past incentive payouts will appear here as they accumulate."
+            emptyTitle="No target breakdown"
+            emptyDescription="Assign product targets to staff to see their incentive breakdown here."
           />
         </div>
       </Card>

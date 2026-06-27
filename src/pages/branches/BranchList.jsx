@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
@@ -25,7 +25,9 @@ import { achievementStyleFromPct } from '@/utils/achievement'
 import { REGIONS } from '@/constants'
 
 import {
+  fetchBranches,
   selectBranches,
+  selectBranchStatus,
   setFilter,
 } from '@/redux/slices/branchSlice'
 
@@ -40,6 +42,7 @@ import AchievementBadge from '@/components/ui/AchievementBadge'
 import DataTable from '@/components/data/DataTable'
 import KPICard from '@/components/cards/KPICard'
 import EmptyState from '@/components/feedback/EmptyState'
+import Loader from '@/components/feedback/Loader'
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                           */
@@ -62,7 +65,8 @@ const EXPORT_COLUMNS = [
   { key: 'totalLeads', label: 'Leads' },
   { key: 'totalSales', label: 'Sales' },
   { key: 'monthlyRevenue', label: 'Monthly Revenue (AED)' },
-  { key: 'totalRevenue', label: 'Total Revenue (AED)' },
+  { key: 'totalRevenue', label: 'Total Revenue (₹)' },
+  { key: 'targetRevenue', label: 'Assigned Target (₹)' },
   { key: 'targetAchievement', label: 'Target %' },
   { key: 'status', label: 'Status' },
 ]
@@ -108,7 +112,9 @@ function MiniStat({ icon: Icon, label, value }) {
 /* Branch card                                                         */
 /* ------------------------------------------------------------------ */
 function BranchCard({ branch, onClick }) {
-  const pct = branch.targetAchievement
+  // Analytics fields (staffCount, totals, revenue, targetAchievement) are not on
+  // the list payload — guard with fallbacks so the card never crashes.
+  const pct = branch.targetAchievement || 0
   return (
     <motion.button
       type="button"
@@ -177,6 +183,24 @@ function BranchCard({ branch, onClick }) {
           </span>
         </div>
         <ProgressBar value={pct} color={achievementStyleFromPct(pct).bar} size="md" />
+        <div className="mt-2 flex items-center justify-between rounded-lg bg-surface-muted/60 px-3 py-2 ring-1 ring-line/60 dark:bg-slate-800/50 dark:ring-slate-700/50">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-ink-soft dark:text-slate-400">
+            <FiTarget className="h-3.5 w-3.5" /> Target Progress
+          </span>
+          <span className="font-display text-sm font-bold text-ink dark:text-slate-100">
+            {branch.targetRevenue ? (
+              <>
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(branch.totalRevenue || 0, { compact: true })}
+                </span>
+                <span className="text-ink-faint dark:text-slate-500"> / </span>
+                {formatCurrency(branch.targetRevenue, { compact: true })}
+              </>
+            ) : (
+              '—'
+            )}
+          </span>
+        </div>
       </div>
 
       {/* footer */}
@@ -202,8 +226,15 @@ export default function BranchList() {
 
   const branches = useSelector(selectBranches)
   const filters = useSelector((s) => s.branches.filters)
+  const branchStatus = useSelector(selectBranchStatus)
 
+  const loading = branchStatus === 'loading' || branchStatus === 'idle'
   const [view, setView] = useState('grid')
+
+  // Load branches from the API on mount.
+  useEffect(() => {
+    dispatch(fetchBranches())
+  }, [dispatch])
 
   const onFilter = (key, value) => dispatch(setFilter({ key, value }))
 
@@ -294,17 +325,25 @@ export default function BranchList() {
         key: 'targetAchievement',
         header: 'Target',
         sortable: true,
-        width: 160,
-        render: (b) => (
-          <div className="min-w-[120px]">
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(b.targetAchievement).text)}>
-                {b.targetAchievement}%
-              </span>
+        width: 180,
+        render: (b) => {
+          const pct = b.targetAchievement || 0
+          return (
+            <div className="min-w-[150px]">
+              <div className="mb-1 flex items-center justify-between text-xs">
+                <span className="font-semibold text-ink dark:text-slate-200">
+                  {b.targetRevenue
+                    ? `${formatCurrency(b.totalRevenue || 0, { compact: true })} / ${formatCurrency(b.targetRevenue, { compact: true })}`
+                    : '—'}
+                </span>
+                <span className={cn('font-semibold tabular-nums', achievementStyleFromPct(pct).text)}>
+                  {pct}%
+                </span>
+              </div>
+              <ProgressBar value={pct} color={achievementStyleFromPct(pct).bar} size="sm" />
             </div>
-            <ProgressBar value={b.targetAchievement} color={achievementStyleFromPct(b.targetAchievement).bar} size="sm" />
-          </div>
-        ),
+          )
+        },
       },
       {
         key: 'status',
@@ -414,7 +453,13 @@ export default function BranchList() {
       </p>
 
       {/* Content */}
-      {filtered.length === 0 ? (
+      {loading && branches.length === 0 ? (
+        <div className="rounded-2xl border border-line bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-center py-20">
+            <Loader size="lg" label="Loading branches…" />
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-2xl border border-line bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
           <EmptyState
             icon={FiHome}
@@ -442,6 +487,7 @@ export default function BranchList() {
         <DataTable
           columns={columns}
           data={filtered}
+          loading={loading}
           rowKey={(b) => b.id}
           onRowClick={(b) => navigate(`/branches/${b.id}`)}
           emptyTitle="No branches found"

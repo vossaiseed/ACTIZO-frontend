@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSelector } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
   FiUsers,
@@ -27,9 +27,8 @@ import {
   FiChevronRight,
 } from 'react-icons/fi'
 
-import { selectDashboard } from '@/redux/slices/dashboardSlice'
+import { fetchDashboard, selectDashboard } from '@/redux/slices/dashboardSlice'
 import { selectUser } from '@/redux/slices/authSlice'
-import { totalSales as totalSalesCount } from '@/data/sales'
 import { achievementStyleFromPct } from '@/utils/achievement'
 import { cn } from '@/utils/cn'
 import {
@@ -189,15 +188,15 @@ function BranchPerfCard({ card }) {
 }
 
 export default function Dashboard() {
+  const dispatch = useDispatch()
   const {
     kpis,
     deltas,
     charts,
     branchPerformanceCards,
-    recentActivities,
     recentLeads,
-    topPerformers,
     upcomingFollowUps,
+    status,
   } = useSelector(selectDashboard)
   const user = useSelector(selectUser)
 
@@ -214,14 +213,15 @@ export default function Dashboard() {
       }`
     : "Welcome back — here's your sales overview"
 
-  const [loading, setLoading] = useState(true)
   const [range, setRange] = useState('30d')
 
-  // Brief shimmer on first mount so skeletons get a moment to show.
+  // Loading is driven by the fetch status (idle until the first request resolves).
+  const loading = status === 'loading' || status === 'idle'
+
+  // Fetch the live dashboard payload on mount.
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600)
-    return () => clearTimeout(t)
-  }, [])
+    dispatch(fetchDashboard())
+  }, [dispatch])
 
   /* ---- KPI definitions (core 5) ----------------------------------- */
   const kpiCards = useMemo(
@@ -235,7 +235,7 @@ export default function Dashboard() {
       },
       {
         label: 'Total Sales',
-        value: totalSalesCount,
+        value: kpis.totalSales ?? 0,
         delta: deltas.wonLeads,
         icon: FiShoppingCart,
         tone: 'sky',
@@ -257,7 +257,7 @@ export default function Dashboard() {
       },
       {
         label: 'Pending Follow-Ups',
-        value: upcomingFollowUps.length,
+        value: (upcomingFollowUps || []).length,
         icon: FiPhoneCall,
         tone: 'amber',
       },
@@ -341,7 +341,7 @@ export default function Dashboard() {
           )}
         >
           <AreaChartView
-            data={charts.revenueTrend}
+            data={charts.revenueTrend || []}
             xKey="month"
             height={320}
             tooltipFormatter={currencyTooltip}
@@ -360,7 +360,7 @@ export default function Dashboard() {
           loading={loading}
         >
           <BarChartView
-            data={charts.leadPipeline}
+            data={charts.leadPipeline || []}
             xKey="stage"
             height={320}
             horizontal
@@ -401,7 +401,7 @@ export default function Dashboard() {
             animate="show"
             className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
           >
-            {branchPerformanceCards.map((card) => (
+            {(branchPerformanceCards || []).map((card) => (
               <motion.div key={card.id} variants={item}>
                 <BranchPerfCard card={card} />
               </motion.div>
@@ -427,7 +427,7 @@ export default function Dashboard() {
             }
           />
           <div className="mt-4">
-            {recentLeads.length === 0 ? (
+            {(recentLeads || []).length === 0 ? (
               <EmptyState icon={FiUsers} title="No leads yet" />
             ) : (
               <motion.ul
@@ -436,7 +436,7 @@ export default function Dashboard() {
                 animate="show"
                 className="divide-y divide-line dark:divide-slate-800"
               >
-                {recentLeads.slice(0, 6).map((lead) => (
+                {(recentLeads || []).slice(0, 6).map((lead) => (
                   <motion.li
                     key={lead.id}
                     variants={item}
@@ -477,7 +477,7 @@ export default function Dashboard() {
             }
           />
           <div className="mt-4">
-            {upcomingFollowUps.length === 0 ? (
+            {(upcomingFollowUps || []).length === 0 ? (
               <EmptyState icon={FiCalendar} title="No upcoming follow-ups" />
             ) : (
               <motion.div
@@ -486,7 +486,7 @@ export default function Dashboard() {
                 animate="show"
                 className="grid grid-cols-1 gap-3 sm:grid-cols-2"
               >
-                {upcomingFollowUps.slice(0, 6).map((f) => (
+                {(upcomingFollowUps || []).slice(0, 6).map((f) => (
                   <motion.div
                     key={f.id}
                     variants={item}

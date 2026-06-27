@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { motion } from 'framer-motion'
@@ -34,14 +34,15 @@ import {
 
 import { cn } from '@/utils/cn'
 import { formatCurrency, formatDate, formatRelativeTime } from '@/utils/format'
-import { leadById as leadByIdData, LEAD_STATUSES } from '@/data/leads'
-import { staffByBranch } from '@/data/staff'
+import { LEAD_STATUSES } from '@/data/leads'
 import {
-  selectLeadById,
+  selectCurrentLead,
+  fetchLeadById,
   updateLeadStatus,
   addFollowUp,
   assignStaff,
 } from '@/redux/slices/leadSlice'
+import { fetchStaff, selectStaff } from '@/redux/slices/staffSlice'
 import {
   getWorkflowState,
   allowedStatuses,
@@ -285,15 +286,28 @@ export default function LeadDetails() {
   const dispatch = useDispatch()
   const toast = useToast()
 
-  const leadFromStore = useSelector(selectLeadById(id))
-  const lead = leadFromStore || (id ? leadByIdData(id) : null)
+  const current = useSelector(selectCurrentLead)
+  const lead = current?.id === id ? current : null
+  const allStaff = useSelector(selectStaff)
 
+  const [notFound, setNotFound] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [assignOpen, setAssignOpen] = useState(false)
   const [recordSaleOpen, setRecordSaleOpen] = useState(false)
   const [staffChoice, setStaffChoice] = useState('')
 
-  const branchStaff = useMemo(() => staffByBranch(lead?.branchId), [lead?.branchId])
+  // Load the full lead (timeline + follow-ups + activities) and the staff list.
+  useEffect(() => {
+    if (!id) return
+    setNotFound(false)
+    dispatch(fetchLeadById(id)).unwrap().catch(() => setNotFound(true))
+    dispatch(fetchStaff())
+  }, [id, dispatch])
+
+  const branchStaff = useMemo(
+    () => allStaff.filter((s) => !lead?.branchId || s.branchId === lead.branchId),
+    [allStaff, lead?.branchId],
+  )
 
   const {
     register,
@@ -309,6 +323,51 @@ export default function LeadDetails() {
       remark: '',
     },
   })
+
+  // Derived lists — declared before any early return so hook order stays stable.
+  const activityItems = useMemo(
+    () =>
+      (lead?.activities || []).map((a) => ({
+        id: a.id,
+        title: a.action,
+        description: a.detail,
+        date: a.date,
+        by: a.by,
+        type: 'status',
+      })),
+    [lead?.activities],
+  )
+
+  const followUpItems = useMemo(
+    () =>
+      (lead?.followUps || []).map((f) => ({
+        id: f.id,
+        title: f.type,
+        status: f.status,
+        description: f.remark,
+        date: f.date,
+        by: f.by,
+        nextDate: f.nextDate,
+        icon: FOLLOWUP_TYPE_ICONS[f.type] || FiActivity,
+        type: f.status === 'Completed' ? 'won' : f.status === 'Missed' ? 'lost' : 'status',
+      })),
+    [lead?.followUps],
+  )
+
+  /* ---- Loading ---- */
+  if (!lead && !notFound) {
+    return (
+      <motion.div {...pageMotion} className="space-y-6">
+        <div className="h-8 w-32 animate-pulse rounded-lg bg-surface-muted dark:bg-slate-800" />
+        <Card padding="lg">
+          <div className="space-y-4">
+            <div className="h-6 w-48 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+            <div className="h-40 animate-pulse rounded-xl bg-surface-muted dark:bg-slate-800" />
+          </div>
+        </Card>
+      </motion.div>
+    )
+  }
 
   /* ---- Not found ---- */
   if (!lead) {
@@ -385,44 +444,14 @@ export default function LeadDetails() {
       toast.warning('Please select a staff member to allocate.')
       return
     }
-    dispatch(assignStaff({ leadId: lead.id, staffId: staffChoice }))
     const member = branchStaff.find((s) => s.id === staffChoice)
+    dispatch(assignStaff({ leadId: lead.id, staffId: staffChoice, staffName: member?.name }))
     toast.success(`Lead allocated to ${member?.name || 'staff'}.`, { title: 'Staff assigned' })
     setAssignOpen(false)
   }
 
   /* ---- Derived display data ---- */
   const subtitle = [lead.company, lead.id].filter(Boolean).join('  •  ')
-
-  const activityItems = useMemo(
-    () =>
-      (lead.activities || []).map((a) => ({
-        id: a.id,
-        title: a.action,
-        description: a.detail,
-        date: a.date,
-        by: a.by,
-        type: 'status',
-      })),
-    [lead.activities],
-  )
-
-  const followUpItems = useMemo(
-    () =>
-      (lead.followUps || []).map((f) => ({
-        id: f.id,
-        title: f.type,
-        status: f.status,
-        description: f.remark,
-        date: f.date,
-        by: f.by,
-        nextDate: f.nextDate,
-        icon: FOLLOWUP_TYPE_ICONS[f.type] || FiActivity,
-        type:
-          f.status === 'Completed' ? 'won' : f.status === 'Missed' ? 'lost' : 'status',
-      })),
-    [lead.followUps],
-  )
 
   const allowed = allowedStatuses(lead)
   const statusItems = LEAD_STATUSES.map((s) => {

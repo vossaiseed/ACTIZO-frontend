@@ -9,12 +9,11 @@ import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
 import Textarea from '@/components/ui/Textarea'
 
-import { addSale } from '@/redux/slices/salesSlice'
+import { addSale, fetchSalesStats } from '@/redux/slices/salesSlice'
 import { selectActiveProducts } from '@/redux/slices/productSlice'
-import { branchOptions, branchById } from '@/data/branches'
-import { staff, staffById } from '@/data/staff'
-import { productById } from '@/data/products'
-import { leads } from '@/data/leads'
+import { selectBranches } from '@/redux/slices/branchSlice'
+import { selectStaff } from '@/redux/slices/staffSlice'
+import { selectUser, selectRoleKey } from '@/redux/slices/authSlice'
 import { useToast } from '@/hooks/useToast'
 import { formatCurrency } from '@/utils/format'
 import { cn } from '@/utils/cn'
@@ -43,38 +42,42 @@ function ReadOnly({ label, value, highlight }) {
  * RecordSaleModal — used in the Sales module and inside Won-lead details.
  * Product Category & Product Name come from the Product Management module
  * (active products only); selecting a product auto-fills its unit price.
+ * Branch / Staff / Product options are sourced from the store (real ids) and
+ * the sale is created against the live backend (camelCase ids on submit).
  */
 export default function RecordSaleModal({ open, onClose, lead = null }) {
   const dispatch = useDispatch()
   const toast = useToast()
   const activeProducts = useSelector(selectActiveProducts)
+  const branches = useSelector(selectBranches)
+  const staffMembers = useSelector(selectStaff)
+  const currentUser = useSelector(selectUser)
+  const roleKey = useSelector(selectRoleKey)
+  // A staff user can only record sales for themselves in their own branch.
+  const isStaff = roleKey === 'staff'
+
+  const productById = (pid) => activeProducts.find((p) => p.id === pid) || null
 
   const categories = useMemo(
     () => Array.from(new Set(activeProducts.map((p) => p.category))),
     [activeProducts],
   )
 
-  const wonLeads = useMemo(
-    () => leads.filter((l) => l.status === 'Won' || l.status === 'Negotiation'),
-    [],
-  )
-  const leadOptions = useMemo(
-    () => [{ value: '', label: '— None —' }, ...wonLeads.map((l) => ({ value: l.id, label: `${l.id} — ${l.name}` }))],
-    [wonLeads],
+  const branchOptions = useMemo(
+    () => branches.map((b) => ({ value: b.id, label: b.name })),
+    [branches],
   )
 
   const buildDefaults = (l) => {
     const prod = l ? productById(l.productId) : null
-    const isActive = prod && activeProducts.some((p) => p.id === prod.id)
     return {
-      customer: l?.name || '',
-      leadRef: l?.id || '',
-      branch: l?.branchId || branchOptions[0]?.value || '',
-      staff: l?.staffId || '',
-      category: isActive ? prod.category : categories[0] || '',
-      product: isActive ? prod.id : '',
+      customer: l?.customer || l?.name || '',
+      branch: l?.branchId || (isStaff ? currentUser?.branchId : branchOptions[0]?.value) || '',
+      staff: l?.staffId || (isStaff ? currentUser?.id : '') || '',
+      category: prod ? prod.category : categories[0] || '',
+      product: prod ? prod.id : '',
       quantity: 1,
-      unitPrice: isActive ? prod.price : '',
+      unitPrice: prod ? prod.price : '',
       discount: 0,
       saleDate: today(),
       paymentStatus: 'Paid',
@@ -83,14 +86,14 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
     }
   }
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isSubmitting } } = useForm({
     defaultValues: buildDefaults(lead),
   })
 
   useEffect(() => {
     if (open) reset(buildDefaults(lead))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, lead])
+  }, [open, lead, activeProducts, branches])
 
   const branchVal = watch('branch')
   const categoryVal = watch('category')
@@ -101,9 +104,12 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
   const finalAmount = Math.max(0, total - discount)
 
   const staffOpts = useMemo(() => {
-    const list = branchVal ? staff.filter((s) => s.branchId === branchVal) : staff
-    return [{ value: '', label: 'Select staff' }, ...list.map((s) => ({ value: s.id, label: `${s.name} — ${s.role}` }))]
-  }, [branchVal])
+    const list = branchVal ? staffMembers.filter((s) => s.branchId === branchVal) : staffMembers
+    return [
+      { value: '', label: 'Select staff' },
+      ...list.map((s) => ({ value: s.id, label: s.role ? `${s.name} — ${s.role}` : s.name })),
+    ]
+  }, [branchVal, staffMembers])
 
   const productOpts = useMemo(() => {
     const list = activeProducts.filter((p) => !categoryVal || p.category === categoryVal)
@@ -111,24 +117,6 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
   }, [activeProducts, categoryVal])
 
   // compose RHF onChange with autofill side-effects
-  const leadReg = register('leadRef')
-  const onLeadRef = (e) => {
-    leadReg.onChange(e)
-    const l = wonLeads.find((x) => x.id === e.target.value)
-    if (l) {
-      const prod = productById(l.productId)
-      const isActive = prod && activeProducts.some((p) => p.id === prod.id)
-      setValue('customer', l.name)
-      setValue('branch', l.branchId)
-      setValue('staff', l.staffId || '')
-      if (isActive) {
-        setValue('category', prod.category)
-        setValue('product', prod.id)
-        setValue('unitPrice', prod.price)
-      }
-    }
-  }
-
   const productReg = register('product', { required: 'Select a product' })
   const onProduct = (e) => {
     productReg.onChange(e)
@@ -136,45 +124,40 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
     if (p) setValue('unitPrice', p.price)
   }
 
-  const onSubmit = (form) => {
-    const branch = branchById(form.branch)
-    const member = form.staff ? staffById(form.staff) : null
-    const prod = productById(form.product)
+  const onSubmit = async (form) => {
     const q = Number(form.quantity) || 0
     const up = Number(form.unitPrice) || 0
     const disc = Number(form.discount) || 0
+    // Display total; the backend computes finalAmount authoritatively.
     const amount = Math.max(0, q * up - disc)
-    const sale = {
-      id: `SL-${Date.now()}`,
-      leadId: form.leadRef || null,
+
+    // camelCase ids per the backend create contract.
+    const body = {
       customer: form.customer.trim(),
-      product: prod?.name || '',
-      productId: prod?.id || form.product,
-      category: form.category,
-      branchId: branch?.id || form.branch,
-      branchName: branch?.name || '',
-      staffId: member?.id || null,
-      staffName: member?.name || 'Unassigned',
+      productId: form.product,
       quantity: q,
-      unit: prod?.unit || 'PCS',
       unitPrice: up,
-      totalAmount: q * up,
       discount: disc,
-      finalAmount: amount,
-      amount, // used by the sales table & KPI recompute
       date: form.saleDate,
-      status: form.paymentStatus === 'Paid' ? 'Completed' : 'Pending',
       paymentStatus: form.paymentStatus,
       paymentMethod: form.paymentMethod,
-      paymentMode: form.paymentMethod,
-      remarks: form.remarks,
+      branchId: form.branch,
+      staffId: form.staff || null,
+      ...(lead?.id ? { leadId: lead.id } : {}),
     }
-    dispatch(addSale(sale))
-    toast.success(
-      `Sale recorded for ${sale.customer} — ${formatCurrency(amount)}. Targets, branch, staff & incentives updated.`,
-      { title: 'Sale recorded' },
-    )
-    onClose()
+
+    try {
+      await dispatch(addSale(body)).unwrap()
+      // Refresh aggregate stats so KPIs / top products reflect the new sale.
+      dispatch(fetchSalesStats())
+      toast.success(
+        `Sale recorded for ${body.customer} — ${formatCurrency(amount)}. Revenue, branch, staff & incentives updated.`,
+        { title: 'Sale recorded' },
+      )
+      onClose()
+    } catch (err) {
+      toast.error(err || 'Failed to record sale.', { title: 'Could not record sale' })
+    }
   }
 
   return (
@@ -186,16 +169,27 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
       size="xl"
       footer={
         <>
-          <Button variant="outline" type="button" leftIcon={<FiX />} onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="record-sale-form" leftIcon={<FiSave />}>Save Sale</Button>
+          <Button variant="outline" type="button" leftIcon={<FiX />} onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+          <Button variant="primary" type="submit" form="record-sale-form" leftIcon={<FiSave />} loading={isSubmitting}>Save Sale</Button>
         </>
       }
     >
       <form id="record-sale-form" onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Input label="Customer Name" error={errors.customer?.message} {...register('customer', { required: 'Customer name is required' })} />
-        <Select label="Lead Reference" options={leadOptions} {...leadReg} onChange={onLeadRef} />
-        <Select label="Branch" options={branchOptions} error={errors.branch?.message} {...register('branch', { required: 'Select a branch' })} />
-        <Select label="Sales Staff" options={staffOpts} {...register('staff')} />
+        {isStaff ? (
+          <>
+            {/* Staff sales are always bound to the logged-in user + their branch. */}
+            <ReadOnly label="Branch" value={currentUser?.branchName || '—'} />
+            <ReadOnly label="Sales Staff" value={currentUser?.name || 'You'} />
+            <input type="hidden" {...register('branch')} />
+            <input type="hidden" {...register('staff')} />
+          </>
+        ) : (
+          <>
+            <Select label="Branch" options={branchOptions} error={errors.branch?.message} {...register('branch', { required: 'Select a branch' })} />
+            <Select label="Sales Staff" options={staffOpts} {...register('staff')} />
+          </>
+        )}
         <Select label="Product Category" options={categories.map((c) => ({ value: c, label: c }))} {...register('category')} />
         <Select label="Product Name" options={productOpts} error={errors.product?.message} {...productReg} onChange={onProduct} />
         <Input label="Quantity" type="number" min="1" error={errors.quantity?.message} {...register('quantity', { required: 'Required', min: { value: 1, message: 'Min 1' } })} />

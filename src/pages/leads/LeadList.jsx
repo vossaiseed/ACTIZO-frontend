@@ -37,6 +37,7 @@ import { exportData } from '@/utils/export'
 import {
   selectLeads,
   selectLeadFilters,
+  selectLeadStatus,
   setFilter,
   setSort,
   setPage,
@@ -44,17 +45,17 @@ import {
   addLead,
   updateLead,
   deleteLead,
+  fetchLeads,
 } from '@/redux/slices/leadSlice'
+import { fetchBranches, selectBranches, selectBranchOptions } from '@/redux/slices/branchSlice'
+import { fetchProducts, selectProductOptions } from '@/redux/slices/productSlice'
+import { fetchStaff, selectStaffOptions } from '@/redux/slices/staffSlice'
 
 import {
   LEAD_STATUSES,
   LEAD_SOURCES,
   LEAD_PRIORITIES,
 } from '@/data/leads'
-import { branchOptions, branchById } from '@/data/branches'
-import { staffOptions } from '@/data/staff'
-import { productOptions, productById } from '@/data/products'
-import { assignBranchByLocation } from '@/utils/leadWorkflow'
 
 import PageHeader from '@/components/common/PageHeader'
 import SearchBar from '@/components/common/SearchBar'
@@ -80,8 +81,6 @@ const toOpts = (arr) => arr.map((v) => ({ value: v, label: v }))
 const STATUS_FILTER_OPTS = [ALL, ...toOpts(LEAD_STATUSES)]
 const SOURCE_FILTER_OPTS = [ALL, ...toOpts(LEAD_SOURCES)]
 const PRIORITY_FILTER_OPTS = [ALL, ...toOpts(LEAD_PRIORITIES)]
-const BRANCH_FILTER_OPTS = [ALL, ...branchOptions]
-const STAFF_FILTER_OPTS = [ALL, ...staffOptions]
 
 // Form selects (no "All", but a placeholder where useful)
 const SOURCE_FORM_OPTS = toOpts(LEAD_SOURCES)
@@ -120,17 +119,26 @@ export default function LeadList() {
   const sort = useSelector((s) => s.leads.sort)
   const page = useSelector((s) => s.leads.page)
   const pageSize = useSelector((s) => s.leads.pageSize)
+  const leadStatus = useSelector(selectLeadStatus)
 
-  const [loading, setLoading] = useState(true)
+  // Branch / staff filter options sourced from the backend (real ids).
+  const branchOptions = useSelector(selectBranchOptions)
+  const staffOptions = useSelector(selectStaffOptions)
+  const BRANCH_FILTER_OPTS = useMemo(() => [ALL, ...branchOptions], [branchOptions])
+  const STAFF_FILTER_OPTS = useMemo(() => [ALL, ...staffOptions], [staffOptions])
+
+  const loading = leadStatus === 'loading' || leadStatus === 'idle'
   const [addOpen, setAddOpen] = useState(false)
   const [editLead, setEditLead] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
 
-  // Loading skeleton on mount.
+  // Load leads + reference data (branches/products/staff) from the API on mount.
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600)
-    return () => clearTimeout(t)
-  }, [])
+    dispatch(fetchLeads())
+    dispatch(fetchBranches())
+    dispatch(fetchProducts())
+    dispatch(fetchStaff())
+  }, [dispatch])
 
   // -------------------------------------------------------------------------
   // KPI counts (computed from the full lead set, independent of filters)
@@ -590,7 +598,21 @@ export default function LeadList() {
 // ---------------------------------------------------------------------------
 function AddLeadModal({ open, onClose, lead, onCreate, onUpdate }) {
   const isEdit = Boolean(lead)
-  const defaultBranch = assignBranchByLocation('')?.id || branchOptions[0]?.value || ''
+  const branches = useSelector(selectBranches)
+  const branchOptions = useSelector(selectBranchOptions)
+  const productOptions = useSelector(selectProductOptions)
+  // Best-effort: auto-pick the branch whose name/city matches the typed location.
+  const matchBranchByLocation = (loc) => {
+    if (!loc) return null
+    const t = loc.trim().toLowerCase()
+    return (
+      branches.find(
+        (b) =>
+          (b.name || '').toLowerCase().includes(t) || (b.city || '').toLowerCase().includes(t),
+      ) || null
+    )
+  }
+  const defaultBranch = branchOptions[0]?.value || ''
   const blank = {
     name: '', company: '', mobile: '', email: '', location: '',
     branch: defaultBranch, product: productOptions[0]?.value || '',
@@ -626,71 +648,29 @@ function AddLeadModal({ open, onClose, lead, onCreate, onUpdate }) {
   const locReg = register('location', { required: 'Location is required' })
   const onLocationChange = (e) => {
     locReg.onChange(e)
-    const b = assignBranchByLocation(e.target.value)
+    const b = matchBranchByLocation(e.target.value)
     if (b?.id) setValue('branch', b.id)
   }
 
   const onSubmit = (form) => {
-    const product = productById(form.product)
     const value = Number(form.value) || 0
-
-    const branch = branchById(form.branch) || assignBranchByLocation(form.location)
-
-    if (isEdit) {
-      onUpdate({
-        id: lead.id,
-        name: form.name.trim(),
-        company: form.company.trim(),
-        mobile: form.mobile.trim(),
-        email: form.email.trim(),
-        location: form.location.trim(),
-        branchId: branch?.id || lead.branchId,
-        branchName: branch?.name || lead.branchName,
-        product: product?.name || lead.product,
-        productId: product?.id || form.product,
-        source: form.source,
-        priority: form.priority,
-        value,
-        expectedCloseDate: form.expectedCloseDate || null,
-      })
-      return
-    }
-
-    const today = todayISO()
-    const ts = Date.now()
-    onCreate({
-      id: `LD-${ts}`,
+    const branchName = branchOptions.find((o) => o.value === form.branch)?.label || ''
+    // Backend derives display names from the ids and builds the timeline/activity.
+    const payload = {
       name: form.name.trim(),
       company: form.company.trim(),
       mobile: form.mobile.trim(),
       email: form.email.trim(),
       location: form.location.trim(),
-      product: product?.name || '',
-      productId: product?.id || form.product,
+      branchId: form.branch,
+      productId: form.product,
       source: form.source,
-      branchId: branch?.id || null,
-      branchName: branch?.name || '',
-      staffId: null,
-      staffName: 'Unassigned',
-      status: 'New Lead',
       priority: form.priority,
       value,
-      score: 50,
-      createdDate: today,
-      lastActivity: today,
       expectedCloseDate: form.expectedCloseDate || null,
-      nextFollowUp: null,
-      tags: [product?.category, branch?.region, form.priority].filter(Boolean),
-      notes: '',
-      timeline: [
-        { id: `t-${ts}-1`, type: 'created', title: 'Lead created', description: `New lead captured via ${form.source}`, date: today, by: 'You' },
-        { id: `t-${ts}-2`, type: 'assigned', title: 'Branch assigned', description: `Auto-routed to ${branch?.name} from location`, date: today, by: 'System' },
-      ],
-      followUps: [],
-      activities: [
-        { id: `a-${ts}`, action: 'Lead created', detail: `Auto-assigned to ${branch?.name}`, date: today, by: 'You' },
-      ],
-    })
+    }
+    if (isEdit) onUpdate({ id: lead.id, ...payload })
+    else onCreate({ ...payload, branchName })
   }
 
   return (

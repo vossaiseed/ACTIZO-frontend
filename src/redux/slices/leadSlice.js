@@ -1,6 +1,88 @@
-import { createSlice } from '@reduxjs/toolkit'
-import { leads as seedLeads } from '../../data/leads'
-import { staffById } from '../../data/staff'
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
+import { leadsApi, followupsApi } from '@/services/crm'
+
+/* ----------------------------- Thunks ----------------------------- */
+export const fetchLeads = createAsyncThunk('leads/fetch', async (_, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.list({ limit: 1000 })
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const fetchLeadById = createAsyncThunk('leads/fetchOne', async (id, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.get(id)
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+// Kept under the original action names so pages dispatch unchanged.
+export const addLead = createAsyncThunk('leads/add', async (body, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.create(body)
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const updateLead = createAsyncThunk('leads/update', async (payload, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.update(payload.id, payload)
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const deleteLead = createAsyncThunk('leads/delete', async (id, { rejectWithValue }) => {
+  try {
+    await leadsApi.remove(id)
+    return id
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const assignStaff = createAsyncThunk('leads/assign', async ({ leadId, staffId, staffName }, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.assign(leadId, staffId, staffName)
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const updateLeadStatus = createAsyncThunk('leads/updateStatus', async ({ id, status }, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.updateStatus(id, status)
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const addFollowUp = createAsyncThunk('leads/addFollowUp', async ({ leadId, followUp }, { rejectWithValue }) => {
+  try {
+    const { data } = await leadsApi.addFollowUp(leadId, followUp)
+    return { leadId, followUp: data }
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
+
+export const deleteFollowUp = createAsyncThunk('leads/deleteFollowUp', async ({ leadId, followUpId }, { rejectWithValue }) => {
+  try {
+    await followupsApi.remove(followUpId)
+    return { leadId, followUpId }
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
 
 const defaultFilters = {
   search: '',
@@ -12,12 +94,20 @@ const defaultFilters = {
 }
 
 const initialState = {
-  items: seedLeads,
+  items: [],
+  current: null,
   filters: defaultFilters,
   sort: { key: 'createdDate', dir: 'desc' },
   page: 1,
   pageSize: 8,
   status: 'idle',
+  error: null,
+}
+
+const replace = (state, lead) => {
+  const idx = state.items.findIndex((l) => l.id === lead.id)
+  if (idx !== -1) state.items[idx] = { ...state.items[idx], ...lead }
+  if (state.current?.id === lead.id) state.current = { ...state.current, ...lead }
 }
 
 const leadSlice = createSlice({
@@ -35,11 +125,8 @@ const leadSlice = createSlice({
     },
     setSort: (state, action) => {
       const key = action.payload
-      if (state.sort.key === key) {
-        state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc'
-      } else {
-        state.sort = { key, dir: 'asc' }
-      }
+      if (state.sort.key === key) state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc'
+      else state.sort = { key, dir: 'asc' }
     },
     setPage: (state, action) => {
       state.page = action.payload
@@ -48,98 +135,56 @@ const leadSlice = createSlice({
       state.pageSize = action.payload
       state.page = 1
     },
-    addLead: (state, action) => {
-      state.items.unshift(action.payload)
-    },
-    updateLead: (state, action) => {
-      const idx = state.items.findIndex((l) => l.id === action.payload.id)
-      if (idx !== -1) state.items[idx] = { ...state.items[idx], ...action.payload }
-    },
-    deleteLead: (state, action) => {
-      state.items = state.items.filter((l) => l.id !== action.payload)
-    },
-    assignStaff: (state, action) => {
-      const { leadId, staffId } = action.payload
-      const lead = state.items.find((l) => l.id === leadId)
-      if (!lead) return
-      const member = staffById(staffId)
-      lead.staffId = staffId
-      lead.staffName = member?.name || 'Unassigned'
-      if (lead.status === 'New Lead') lead.status = 'Assigned'
-      const date = new Date().toISOString().slice(0, 10)
-      lead.timeline.push({
-        id: `t-${Date.now()}`,
-        type: 'assigned',
-        title: 'Staff assigned',
-        description: `Lead allocated to ${member?.name || 'staff'}`,
-        date,
-        by: 'Branch Manager',
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchLeads.pending, (state) => {
+        // Only block the UI on the first load; keep cached data visible on refetch.
+        if (!state.items.length) state.status = 'loading'
       })
-      lead.activities.unshift({
-        id: `a-${Date.now()}`,
-        action: 'Staff assigned',
-        detail: `Allocated to ${member?.name || 'staff'}`,
-        date,
-        by: 'Branch Manager',
+      .addCase(fetchLeads.fulfilled, (state, action) => {
+        state.status = 'succeeded'
+        state.items = action.payload
       })
-      lead.lastActivity = date
-    },
-    updateLeadStatus: (state, action) => {
-      const { id, status } = action.payload
-      const lead = state.items.find((l) => l.id === id)
-      if (lead) {
-        lead.status = status
-        lead.timeline.push({
-          id: `t-${Date.now()}`,
-          type: 'status',
-          title: status,
-          description: `Stage moved to ${status}`,
-          date: new Date().toISOString().slice(0, 10),
-          by: lead.staffName,
-        })
-      }
-    },
-    addFollowUp: (state, action) => {
-      const { leadId, followUp } = action.payload
-      const lead = state.items.find((l) => l.id === leadId)
-      if (lead) {
-        lead.followUps.unshift(followUp)
-        lead.activities.unshift({
-          id: `a-${Date.now()}`,
-          action: `Follow-up (${followUp.type})`,
-          detail: followUp.remark,
-          date: followUp.date,
-          by: followUp.by,
-        })
-        lead.lastActivity = followUp.date
-        if (followUp.nextDate) lead.nextFollowUp = followUp.nextDate
-      }
-    },
-    deleteFollowUp: (state, action) => {
-      const { leadId, followUpId } = action.payload
-      const lead = state.items.find((l) => l.id === leadId)
-      if (lead) lead.followUps = lead.followUps.filter((f) => f.id !== followUpId)
-    },
+      .addCase(fetchLeads.rejected, (state, action) => {
+        state.status = 'failed'
+        state.error = action.payload
+      })
+      .addCase(fetchLeadById.fulfilled, (state, action) => {
+        state.current = action.payload
+        replace(state, action.payload)
+      })
+      .addCase(addLead.fulfilled, (state, action) => {
+        state.items.unshift(action.payload)
+      })
+      .addCase(updateLead.fulfilled, (state, action) => replace(state, action.payload))
+      .addCase(deleteLead.fulfilled, (state, action) => {
+        state.items = state.items.filter((l) => l.id !== action.payload)
+      })
+      .addCase(assignStaff.fulfilled, (state, action) => replace(state, action.payload))
+      .addCase(updateLeadStatus.fulfilled, (state, action) => replace(state, action.payload))
+      .addCase(addFollowUp.fulfilled, (state, action) => {
+        const { leadId, followUp } = action.payload
+        if (state.current?.id === leadId) {
+          state.current.followUps = [followUp, ...(state.current.followUps || [])]
+        }
+      })
+      .addCase(deleteFollowUp.fulfilled, (state, action) => {
+        const { leadId, followUpId } = action.payload
+        if (state.current?.id === leadId) {
+          state.current.followUps = (state.current.followUps || []).filter((f) => f.id !== followUpId)
+        }
+      })
   },
 })
 
-export const {
-  setFilter,
-  resetFilters,
-  setSort,
-  setPage,
-  setPageSize,
-  addLead,
-  updateLead,
-  deleteLead,
-  assignStaff,
-  updateLeadStatus,
-  addFollowUp,
-  deleteFollowUp,
-} = leadSlice.actions
+export const { setFilter, resetFilters, setSort, setPage, setPageSize } = leadSlice.actions
 
 export const selectLeads = (s) => s.leads.items
 export const selectLeadFilters = (s) => s.leads.filters
-export const selectLeadById = (id) => (s) => s.leads.items.find((l) => l.id === id)
+export const selectLeadById = (id) => (s) =>
+  s.leads.items.find((l) => l.id === id) || (s.leads.current?.id === id ? s.leads.current : null)
+export const selectCurrentLead = (s) => s.leads.current
+export const selectLeadStatus = (s) => s.leads.status
 
 export default leadSlice.reducer

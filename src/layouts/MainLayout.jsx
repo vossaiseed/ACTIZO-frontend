@@ -1,5 +1,5 @@
 import { Outlet, useLocation } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import Sidebar from '@/components/layout/Sidebar'
 import MobileSidebar from '@/components/layout/MobileSidebar'
 import Header from '@/components/layout/Header'
@@ -31,17 +31,16 @@ export default function MainLayout() {
 
         <main className="scrollbar-thin flex-1">
           <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.3, ease: 'easeOut' }}
-              >
-                <Outlet />
-              </motion.div>
-            </AnimatePresence>
+            {/* Keyed fade-in on each route. No AnimatePresence/exit "wait" —
+                that left pages mounted-but-stuck at opacity:0 on fast navigate-back. */}
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+            >
+              <Outlet />
+            </motion.div>
           </div>
         </main>
       </div>

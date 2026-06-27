@@ -24,6 +24,8 @@ import {
   FiX,
   FiSave,
   FiRefreshCw,
+  FiEye,
+  FiEyeOff,
 } from 'react-icons/fi'
 
 import { cn } from '@/utils/cn'
@@ -41,6 +43,7 @@ import { exportData } from '@/utils/export'
 
 import {
   selectStaff,
+  selectStaffStatus,
   setFilter,
   setSort,
   setPage,
@@ -48,10 +51,12 @@ import {
   addStaff,
   updateStaff,
   toggleStaffStatus,
+  resetStaffPin,
+  fetchStaff,
 } from '@/redux/slices/staffSlice'
+import { fetchBranches, selectBranchOptions } from '@/redux/slices/branchSlice'
 import { selectUser, selectRoleKey } from '@/redux/slices/authSlice'
 
-import { branchOptions, branchById } from '@/data/branches'
 import { ROLES } from '@/constants'
 
 import PageHeader from '@/components/common/PageHeader'
@@ -77,7 +82,6 @@ import { useToast } from '@/components/feedback/Toast'
 const ALL = { value: 'All', label: 'All' }
 const toOpts = (arr) => arr.map((v) => ({ value: v, label: v }))
 
-const BRANCH_FILTER_OPTS = [ALL, ...branchOptions]
 const ROLE_FILTER_OPTS = [ALL, ...toOpts(ROLES)]
 const STATUS_FILTER_OPTS = [
   ALL,
@@ -116,6 +120,7 @@ const scoreTone = (score) => {
 // Staff card
 // ---------------------------------------------------------------------------
 function StaffCard({ member, onView, onEdit, onToggle, onResetPin, canManage }) {
+  const [showPin, setShowPin] = useState(false)
   const stats = [
     { label: 'Assigned', value: formatNumber(member.assignedLeads) },
     { label: 'Won', value: formatNumber(member.wonLeads) },
@@ -137,7 +142,7 @@ function StaffCard({ member, onView, onEdit, onToggle, onResetPin, canManage }) 
         <div className="absolute inset-0 bg-mesh opacity-40" aria-hidden />
         <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold text-amber-600 shadow-soft backdrop-blur dark:bg-slate-900/80 dark:text-amber-300">
           <FiStar className="h-3.5 w-3.5 fill-current" />
-          {member.rating.toFixed(1)}
+          {Number(member.rating || 0).toFixed(1)}
         </div>
       </div>
 
@@ -162,6 +167,27 @@ function StaffCard({ member, onView, onEdit, onToggle, onResetPin, canManage }) 
             {member.branchName}
           </p>
         </div>
+
+        {/* Login PIN (show / hide) */}
+        {canManage && member.pin && (
+          <div className="mt-4 flex items-center gap-2 rounded-lg bg-surface-muted/60 px-3 py-2 text-xs font-medium text-ink-soft dark:bg-slate-800/50 dark:text-slate-400">
+            <FiKey className="h-3.5 w-3.5 shrink-0" />
+            <span>Login PIN</span>
+            <span className="font-mono text-sm font-bold tracking-[0.3em] text-ink dark:text-slate-100">
+              {showPin ? member.pin : '••••••'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowPin((s) => !s)}
+              aria-label={showPin ? 'Hide PIN' : 'Show PIN'}
+              aria-pressed={showPin}
+              className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-brand-600 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-slate-800"
+            >
+              {showPin ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
+              {showPin ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        )}
 
         {/* Key stats */}
         <div className="mt-4 grid grid-cols-3 gap-2.5">
@@ -328,34 +354,38 @@ export default function StaffList() {
   const toast = useToast()
 
   const allStaff = useSelector(selectStaff)
+  const staffStatus = useSelector(selectStaffStatus)
   const user = useSelector(selectUser)
   const roleKey = useSelector(selectRoleKey)
   const isBranchManager = roleKey === 'branch_manager'
   const isAdmin = roleKey === 'admin'
   const canManage = isAdmin || isBranchManager
 
-  // Branch Managers manage only the staff within their own assigned branch.
-  const staff = useMemo(
-    () =>
-      isBranchManager && user?.branchId
-        ? allStaff.filter((s) => s.branchId === user.branchId)
-        : allStaff,
-    [allStaff, isBranchManager, user?.branchId],
-  )
+  // Branch options sourced from the backend (real branch UUIDs) for the
+  // create/edit form's Branch select and the branch filter.
+  const branchOptions = useSelector(selectBranchOptions)
+  const BRANCH_FILTER_OPTS = useMemo(() => [ALL, ...branchOptions], [branchOptions])
+
+  // The backend is the single source of truth for branch isolation: it already
+  // returns ONLY the manager's branch staff (managers) or every staff (admin).
+  // We must NOT re-filter on the client — a stale/placeholder user.branchId would
+  // wrongly hide all staff. Trust the API response.
+  const staff = allStaff
 
   const filters = useSelector((s) => s.staff.filters)
   const sort = useSelector((s) => s.staff.sort)
   const page = useSelector((s) => s.staff.page)
   const pageSize = useSelector((s) => s.staff.pageSize)
 
-  const [loading, setLoading] = useState(true)
+  const loading = staffStatus === 'loading' || staffStatus === 'idle'
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
 
+  // Load staff + branches (real branch UUIDs for the form) from the API on mount.
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600)
-    return () => clearTimeout(t)
-  }, [])
+    dispatch(fetchStaff())
+    dispatch(fetchBranches())
+  }, [dispatch])
 
   // KPIs (over the full staff set, independent of filters)
   const kpis = useMemo(
@@ -402,7 +432,6 @@ export default function StaffList() {
   const handleView = (id) => navigate(`/staff/${id}`)
 
   /* ----- Staff management (Branch Manager only) ----- */
-  const genPin = () => String(Math.floor(100000 + Math.random() * 900000))
   const openCreate = () => {
     setEditing(null)
     setFormOpen(true)
@@ -415,20 +444,36 @@ export default function StaffList() {
     dispatch(toggleStaffStatus(member.id))
     toast.success(`${member.name} is now ${member.status === 'active' ? 'Inactive' : 'Active'}.`)
   }
+  // Backend generates the new PIN and returns it once.
   const handleResetPin = (member) => {
-    const pin = genPin()
-    dispatch(updateStaff({ id: member.id, pin }))
-    toast.success(`New PIN for ${member.name}: ${pin}`, { title: 'PIN reset' })
+    dispatch(resetStaffPin(member.id))
+      .unwrap()
+      .then(({ pin }) => {
+        toast.success(`New PIN for ${member.name}: ${pin}`, { title: 'PIN reset' })
+      })
+      .catch((err) => {
+        toast.error(err || 'Failed to reset PIN.', { title: 'PIN reset failed' })
+      })
   }
   const handleSaveStaff = (data, isEdit) => {
     if (isEdit) {
       dispatch(updateStaff(data))
-      toast.success(`${data.name} updated.`, { title: 'Staff updated' })
+        .unwrap()
+        .then(() => toast.success(`${data.name} updated.`, { title: 'Staff updated' }))
+        .catch((err) => toast.error(err || 'Failed to update staff.', { title: 'Update failed' }))
+      setFormOpen(false)
     } else {
+      // Backend creates the staff and returns the one-time plaintext PIN.
       dispatch(addStaff(data))
-      toast.success(`${data.name} created — PIN ${data.pin}`, { title: 'Sales staff created' })
+        .unwrap()
+        .then((staff) => {
+          toast.success(`${staff.name} created — PIN ${staff.pin}`, {
+            title: 'Sales staff created',
+          })
+          setFormOpen(false)
+        })
+        .catch((err) => toast.error(err || 'Failed to create staff.', { title: 'Create failed' }))
     }
-    setFormOpen(false)
   }
 
   const hasActiveFilters =
@@ -682,6 +727,7 @@ export default function StaffList() {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         member={editing}
+        branchOptions={branchOptions}
         defaultBranchId={isBranchManager ? user?.branchId : undefined}
         lockBranch={isBranchManager}
         onSave={handleSaveStaff}
@@ -693,22 +739,14 @@ export default function StaffList() {
 /* ------------------------------------------------------------------ */
 /* Create / Edit Sales Staff form                                     */
 /* ------------------------------------------------------------------ */
-const STAFF_AVATAR_COLORS = [
-  'from-brand-400 to-brand-600',
-  'from-indigo-400 to-indigo-600',
-  'from-emerald-400 to-emerald-600',
-  'from-amber-400 to-amber-600',
-  'from-sky-400 to-sky-600',
-  'from-violet-400 to-violet-600',
-]
 const STATUS_FORM_OPTS = [
   { value: 'active', label: 'Active' },
   { value: 'inactive', label: 'Inactive' },
 ]
-const todayISO = () => new Date().toISOString().slice(0, 10)
+const ROLE_FORM_OPTS = toOpts(ROLES)
 const randomPin = () => String(Math.floor(100000 + Math.random() * 900000))
 
-function StaffFormModal({ open, onClose, member, defaultBranchId, lockBranch, onSave }) {
+function StaffFormModal({ open, onClose, member, branchOptions = [], defaultBranchId, lockBranch, onSave }) {
   const isEdit = Boolean(member)
   const {
     register,
@@ -717,7 +755,7 @@ function StaffFormModal({ open, onClose, member, defaultBranchId, lockBranch, on
     formState: { errors },
   } = useForm({
     defaultValues: {
-      name: '', mobile: '', email: '', employeeId: '',
+      name: '', mobile: '', email: '', role: 'Sales Executive',
       branchId: defaultBranchId || branchOptions[0]?.value || '',
       pin: '', status: 'active',
     },
@@ -731,58 +769,49 @@ function StaffFormModal({ open, onClose, member, defaultBranchId, lockBranch, on
             name: member.name || '',
             mobile: member.phone || '',
             email: member.email || '',
-            employeeId: member.employeeId || member.id || '',
+            role: member.role || 'Sales Executive',
             branchId: member.branchId || defaultBranchId || branchOptions[0]?.value || '',
             pin: member.pin || '',
             status: member.status || 'active',
           }
         : {
-            name: '', mobile: '', email: '', employeeId: '',
+            name: '', mobile: '', email: '', role: 'Sales Executive',
             branchId: defaultBranchId || branchOptions[0]?.value || '',
             pin: randomPin(),
             status: 'active',
           },
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, member])
+  }, [open, member, branchOptions])
 
   const submit = (form) => {
     const branchId = lockBranch ? defaultBranchId || form.branchId : form.branchId
-    const branchName = branchById(branchId)?.name || ''
     if (isEdit) {
+      // Backend derives display names from the ids; submit camelCase only.
       onSave(
         {
           id: member.id,
           name: form.name.trim(),
+          firstName: form.name.trim().split(' ')[0],
+          role: form.role,
           phone: form.mobile.trim(),
           email: form.email.trim(),
-          employeeId: form.employeeId.trim(),
           branchId,
-          branchName,
-          pin: form.pin,
           status: form.status,
         },
         true,
       )
     } else {
+      // Backend creates the staff (and the login PIN) from these camelCase fields.
       onSave(
         {
-          id: `STF-${Date.now()}`,
           name: form.name.trim(),
           firstName: form.name.trim().split(' ')[0],
-          role: 'Sales Executive',
-          branchId,
-          branchName,
+          role: form.role,
           email: form.email.trim(),
           phone: form.mobile.trim(),
-          employeeId: form.employeeId.trim(),
           pin: form.pin,
-          avatarColor: STAFF_AVATAR_COLORS[Math.floor(Math.random() * STAFF_AVATAR_COLORS.length)],
-          joinDate: todayISO(),
-          status: form.status,
-          assignedLeads: 0, wonLeads: 0, conversionRate: 0,
-          revenue: 0, target: 0, achievement: 0,
-          incentiveEarned: 0, performanceScore: 50, rating: 0,
+          branchId,
         },
         false,
       )
@@ -815,10 +844,13 @@ function StaffFormModal({ open, onClose, member, defaultBranchId, lockBranch, on
         <Input label="Full Name" error={errors.name?.message} {...register('name', { required: 'Full name is required' })} />
         <Input label="Mobile Number" type="tel" placeholder="+91 9XXXX XXXXX" error={errors.mobile?.message} {...register('mobile', { required: 'Mobile number is required' })} />
         <Input label="Email" type="email" error={errors.email?.message} {...register('email', { required: 'Email is required', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' } })} />
-        <Input label="Employee ID" placeholder="e.g. EMP-1024" error={errors.employeeId?.message} {...register('employeeId', { required: 'Employee ID is required' })} />
-        <Select label="Assigned Branch" options={branchOptions} disabled={lockBranch} {...register('branchId', { required: true })} hint={lockBranch ? 'Locked to your branch' : undefined} />
-        <Input label="6-Digit PIN" maxLength={6} inputMode="numeric" error={errors.pin?.message} {...register('pin', { required: 'PIN is required', pattern: { value: /^\d{6}$/, message: 'PIN must be exactly 6 digits' } })} />
-        <Select label="Status" options={STATUS_FORM_OPTS} {...register('status', { required: true })} />
+        <Select label="Role" options={ROLE_FORM_OPTS} {...register('role', { required: true })} />
+        <Select label="Assigned Branch" options={branchOptions} disabled={lockBranch} {...register('branchId', { required: lockBranch ? false : 'Select a branch' })} error={errors.branchId?.message} hint={lockBranch ? 'Locked to your branch' : undefined} />
+        {isEdit ? (
+          <Select label="Status" options={STATUS_FORM_OPTS} {...register('status', { required: true })} />
+        ) : (
+          <Input label="6-Digit PIN" maxLength={6} inputMode="numeric" error={errors.pin?.message} {...register('pin', { required: 'PIN is required', pattern: { value: /^\d{6}$/, message: 'PIN must be exactly 6 digits' } })} />
+        )}
       </form>
     </Modal>
   )

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
 import { motion } from 'framer-motion'
 import {
@@ -19,9 +19,19 @@ import {
   FiPlus,
 } from 'react-icons/fi'
 
-import { selectSales, setFilter, resetFilters, setSort, setPage } from '@/redux/slices/salesSlice'
-import { branchOptions } from '@/data/branches'
-import { productOptions } from '@/data/products'
+import {
+  selectSales,
+  selectSalesStatus,
+  fetchSales,
+  fetchSalesStats,
+  setFilter,
+  resetFilters,
+  setSort,
+  setPage,
+} from '@/redux/slices/salesSlice'
+import { fetchBranches, selectBranchOptions } from '@/redux/slices/branchSlice'
+import { fetchProducts, selectProductOptions } from '@/redux/slices/productSlice'
+import { fetchStaff } from '@/redux/slices/staffSlice'
 
 import PageHeader from '@/components/common/PageHeader'
 import SearchBar from '@/components/common/SearchBar'
@@ -63,8 +73,8 @@ const SALE_STATUS_OPTIONS = [
   { value: 'Refunded', label: 'Refunded' },
 ]
 
-const BRANCH_FILTER_OPTIONS = [{ value: 'All', label: 'All Branches' }, ...branchOptions]
-const PRODUCT_FILTER_OPTIONS = [{ value: 'All', label: 'All Products' }, ...productOptions]
+const ALL_BRANCHES = { value: 'All', label: 'All Branches' }
+const ALL_PRODUCTS = { value: 'All', label: 'All Products' }
 
 const MONTH_OPTIONS = [
   { value: 'Jun', label: 'June 2026' },
@@ -113,11 +123,27 @@ export default function Sales() {
   const dispatch = useDispatch()
   const { items, kpis, charts, topProducts, staffSales, filters, sort, page, pageSize } =
     useSelector(selectSales)
+  const salesStatus = useSelector(selectSalesStatus)
+
+  // Branch / product filter options sourced from the backend (real ids).
+  const branchOptions = useSelector(selectBranchOptions)
+  const productOptions = useSelector(selectProductOptions)
+  const BRANCH_FILTER_OPTIONS = useMemo(() => [ALL_BRANCHES, ...branchOptions], [branchOptions])
+  const PRODUCT_FILTER_OPTIONS = useMemo(() => [ALL_PRODUCTS, ...productOptions], [productOptions])
 
   const [month, setMonth] = useState('Jun')
   const [recordOpen, setRecordOpen] = useState(false)
-  // Simulated initial mount loading so skeletons / empty states are exercised.
-  const [loading] = useState(false)
+  const loading = salesStatus === 'loading' || salesStatus === 'idle'
+
+  // Load sales + stats + reference data (branches/products/staff) for the
+  // record-sale form on mount.
+  useEffect(() => {
+    dispatch(fetchSales())
+    dispatch(fetchSalesStats())
+    dispatch(fetchProducts())
+    dispatch(fetchBranches())
+    dispatch(fetchStaff())
+  }, [dispatch])
 
   /* ----- Filtering / sorting / pagination pipeline ----- */
   const filtered = useMemo(() => {
@@ -324,28 +350,24 @@ export default function Sales() {
             <KPICard
               label="Total Sales"
               value={kpis.totalSales}
-              delta={9.4}
               icon={FiShoppingCart}
               tone="brand"
             />
             <KPICard
               label="Total Revenue"
               value={formatCurrency(kpis.totalRevenue, { compact: true })}
-              delta={12.8}
               icon={FiDollarSign}
               tone="emerald"
             />
             <KPICard
               label="Conversion Rate"
               value={formatPercent(kpis.conversionRate)}
-              delta={2.3}
               icon={FiPercent}
               tone="violet"
             />
             <KPICard
               label="Avg Order Value"
               value={formatCurrency(kpis.avgOrderValue, { compact: true })}
-              delta={-1.5}
               icon={FiShoppingBag}
               tone="amber"
             />

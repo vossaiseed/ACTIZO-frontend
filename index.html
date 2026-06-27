@@ -1,10 +1,13 @@
 <!doctype html>
-<html lang="en" class="">
+<html lang="en" class="" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#36bab3" />
+    <!-- Prevent browser auto-translate (Google Translate) from mutating React's
+         DOM, which throws "Node cannot be found / removeChild" runtime errors. -->
+    <meta name="google" content="notranslate" />
     <meta name="description" content="ACTIZO CRM — premium enterprise CRM platform for leads, sales, targets, incentives and finance." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

@@ -9,19 +9,35 @@ import {
   FiHome,
   FiUserCheck,
   FiEye,
-  FiMoreVertical,
+  FiEyeOff,
   FiUserPlus,
   FiEdit3,
   FiPower,
   FiKey,
+  FiTrash2,
   FiX,
   FiSave,
 } from 'react-icons/fi'
 
-import { selectStaff, addStaff, updateStaff, toggleStaffStatus } from '@/redux/slices/staffSlice'
-import { addUser, updateUser, selectExtraUsers } from '@/redux/slices/userSlice'
+import {
+  selectStaff,
+  fetchStaff,
+  addStaff,
+  updateStaff,
+  toggleStaffStatus,
+  resetStaffPin,
+} from '@/redux/slices/staffSlice'
+import {
+  fetchUsers,
+  addUser,
+  updateUser,
+  removeUser,
+  resetUserPin,
+  selectExtraUsers,
+  selectUserStatus,
+} from '@/redux/slices/userSlice'
+import { fetchBranches, selectBranchOptions } from '@/redux/slices/branchSlice'
 import { selectUser, selectRoleKey } from '@/redux/slices/authSlice'
-import { branches, branchById, branchOptions } from '@/data/branches'
 import { formatDate } from '@/utils/format'
 import { searchData, sortData, paginate, unique } from '@/utils/helpers'
 
@@ -32,23 +48,26 @@ import Input from '@/components/ui/Input'
 import Badge from '@/components/ui/Badge'
 import Avatar from '@/components/ui/Avatar'
 import Button from '@/components/ui/Button'
-import Dropdown from '@/components/ui/Dropdown'
 import Pagination from '@/components/ui/Pagination'
 import KPICard from '@/components/cards/KPICard'
 import EmptyState from '@/components/feedback/EmptyState'
 import Modal from '@/components/overlay/Modal'
+import ConfirmDialog from '@/components/overlay/ConfirmDialog'
 import { useToast } from '@/hooks/useToast'
 
 const ALL = { value: 'All', label: 'All' }
 const PAGE_SIZE = 9
 const SEARCH_KEYS = ['name', 'email', 'role', 'branchName']
 
-const ROLE_TONE = {
-  Administrator: 'brand',
-  'Branch Manager': 'sky',
-  'Team Lead': 'violet',
-  'Senior Sales Executive': 'amber',
-  'Sales Executive': 'gray',
+// Display label for a backend system role.
+const ROLE_LABEL = {
+  admin: 'Administrator',
+  branch_manager: 'Branch Manager',
+}
+// Map a backend system role to the page's `kind` bucket.
+const ROLE_KIND = {
+  admin: 'admin',
+  branch_manager: 'manager',
 }
 
 const AVATAR_COLORS = [
@@ -60,9 +79,6 @@ const AVATAR_COLORS = [
   'from-violet-400 to-violet-600',
 ]
 const pickColor = () => AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]
-const randomPin = () => String(Math.floor(100000 + Math.random() * 900000))
-const todayISO = () => new Date().toISOString().slice(0, 10)
-const lastActiveAt = (i) => new Date(Date.now() - (i * 5 + 1) * 3600 * 1000).toISOString()
 
 export default function Users() {
   const navigate = useNavigate()
@@ -71,6 +87,8 @@ export default function Users() {
 
   const staff = useSelector(selectStaff)
   const extraUsers = useSelector(selectExtraUsers)
+  const userStatus = useSelector(selectUserStatus)
+  const branchOptions = useSelector(selectBranchOptions)
   const authUser = useSelector(selectUser)
   const roleKey = useSelector(selectRoleKey)
   const isBranchManager = roleKey === 'branch_manager'
@@ -84,29 +102,44 @@ export default function Users() {
   const [page, setPage] = useState(1)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
-  // System users = Admin + Branch Managers (seed + created) + Sales Staff.
+  const loading = userStatus === 'loading' || userStatus === 'idle'
+
+  // Load system users (admins + branch managers), sales staff and branch
+  // reference data (real UUIDs for the form's Branch select) on mount.
+  useEffect(() => {
+    dispatch(fetchUsers())
+    dispatch(fetchStaff())
+    dispatch(fetchBranches())
+  }, [dispatch])
+
+  // id -> branch name, sourced from the live branch list.
+  const branchNameById = useMemo(() => {
+    const map = {}
+    for (const o of branchOptions) map[o.value] = o.label
+    return map
+  }, [branchOptions])
+
+  // System users = Admins + Branch Managers (from /users) + Sales Staff (from /staff).
   const users = useMemo(() => {
-    const admin = {
-      id: 'USR-ADMIN', name: 'Alex Morgan', email: 'admin@actizo.com',
-      role: 'Administrator', branchName: 'Head Office',
-      avatarColor: 'from-brand-400 to-brand-600', status: 'active',
-      lastActive: lastActiveAt(0), kind: 'admin', editable: false,
-    }
-    const managers = branches.map((b, i) => ({
-      id: `USR-BM-${b.id}`, name: b.manager, email: b.email,
-      role: 'Branch Manager', branchName: b.name,
-      avatarColor: ['from-indigo-400 to-indigo-600', 'from-sky-400 to-sky-600'][i % 2],
-      status: 'active', lastActive: lastActiveAt(i + 1), kind: 'manager', editable: false,
+    const systemUsers = extraUsers.map((u) => ({
+      ...u,
+      role: ROLE_LABEL[u.role] || u.role,
+      kind: ROLE_KIND[u.role] || 'manager',
+      branchName: u.branchName || branchNameById[u.branchId] || (u.role === 'admin' ? 'Head Office' : ''),
+      lastActive: u.lastLoginAt || u.lastActive || u.updatedAt || u.createdAt,
+      // Admins are not editable from this screen; branch managers are.
+      editable: canManage && u.role === 'branch_manager',
     }))
-    const created = extraUsers.map((u) => ({ ...u, kind: u.kind || 'manager', editable: true }))
-    const staffUsers = staff.map((s, i) => ({
-      id: s.id, name: s.name, email: s.email, role: s.role, branchName: s.branchName,
+    const staffUsers = staff.map((s) => ({
+      id: s.id, name: s.name, email: s.email, role: s.role, pin: s.pin,
+      branchId: s.branchId, branchName: s.branchName || branchNameById[s.branchId] || '',
       avatarColor: s.avatarColor, status: s.status || 'active',
-      lastActive: lastActiveAt(i + branches.length + 1), kind: 'staff', editable: true,
+      lastActive: s.lastLoginAt || s.updatedAt || s.createdAt, kind: 'staff', editable: true,
     }))
-    return [admin, ...managers, ...created, ...staffUsers]
-  }, [staff, extraUsers])
+    return [...systemUsers, ...staffUsers]
+  }, [staff, extraUsers, branchNameById, canManage])
 
   const roleOptions = useMemo(() => [ALL, ...unique(users.map((u) => u.role)).map((r) => ({ value: r, label: r }))], [users])
   const statusOptions = [ALL, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }]
@@ -129,10 +162,6 @@ export default function Users() {
   }, [users, search, role, status, sort])
 
   const paged = paginate(filtered, page, PAGE_SIZE)
-  const onSort = (key) => {
-    setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))
-    setPage(1)
-  }
 
   /* ---- CRUD handlers ---- */
   const openCreate = () => {
@@ -145,55 +174,79 @@ export default function Users() {
     setFormOpen(true)
   }
   const handleToggle = (row) => {
+    const nextStatus = row.status === 'active' ? 'inactive' : 'active'
     if (row.kind === 'staff') dispatch(toggleStaffStatus(row.id))
-    else dispatch(updateUser({ id: row.id, status: row.status === 'active' ? 'inactive' : 'active' }))
-    toast.success(`${row.name} is now ${row.status === 'active' ? 'Inactive' : 'Active'}.`)
+    else dispatch(updateUser({ id: row.id, status: nextStatus }))
+    toast.success(`${row.name} is now ${nextStatus === 'active' ? 'Active' : 'Inactive'}.`)
   }
   const handleResetPin = (row) => {
-    const pin = randomPin()
-    if (row.kind === 'staff') dispatch(updateStaff({ id: row.id, pin }))
-    else dispatch(updateUser({ id: row.id, pin }))
-    toast.success(`New PIN for ${row.name}: ${pin}`, { title: 'PIN reset' })
+    const action = row.kind === 'staff' ? resetStaffPin(row.id) : resetUserPin(row.id)
+    dispatch(action)
+      .unwrap()
+      .then(({ pin }) => toast.success(`New PIN for ${row.name}: ${pin}`, { title: 'PIN reset' }))
+      .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not reset PIN.'))
+  }
+  const handleDelete = (row) => {
+    dispatch(removeUser(row.id))
+      .unwrap()
+      .then(() => toast.success(`${row.name} removed.`, { title: 'User deleted' }))
+      .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not delete user.'))
+    setDeleteTarget(null)
   }
 
   const handleSubmit = (form, member) => {
+    // Branch managers are locked to their own branch when creating.
     const branchId = isBranchManager ? authUser?.branchId || form.branchId : form.branchId
-    const branchName = branchById(branchId)?.name || ''
+    const branchName = branchNameById[branchId] || ''
     if (member) {
       // edit
       if (member.kind === 'staff') {
         dispatch(updateStaff({
           id: member.id, name: form.name.trim(), phone: form.mobile.trim(),
-          email: form.email.trim(), employeeId: form.employeeId.trim(),
-          branchId, branchName, status: form.status, pin: form.pin,
+          email: form.email.trim(), branchId, branchName, status: form.status,
         }))
+          .unwrap()
+          .then(() => toast.success(`${form.name} updated.`, { title: 'User updated' }))
+          .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not update user.'))
       } else {
         dispatch(updateUser({
           id: member.id, name: form.name.trim(), email: form.email.trim(),
-          phone: form.mobile.trim(), employeeId: form.employeeId.trim(),
-          branchId, branchName, status: form.status, pin: form.pin, role: 'Branch Manager',
+          phone: form.mobile.trim(), branchId, status: form.status, role: 'branch_manager',
         }))
+          .unwrap()
+          .then(() => toast.success(`${form.name} updated.`, { title: 'User updated' }))
+          .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not update user.'))
       }
-      toast.success(`${form.name} updated.`, { title: 'User updated' })
     } else if (form.role === 'branch_manager' && isAdmin) {
       // Only an Admin may create Branch Manager accounts.
       dispatch(addUser({
-        id: `USR-BM-${Date.now()}`, name: form.name.trim(), email: form.email.trim(),
-        phone: form.mobile.trim(), employeeId: form.employeeId.trim(),
-        role: 'Branch Manager', branchId, branchName, avatarColor: pickColor(),
-        status: form.status, pin: form.pin, lastActive: new Date().toISOString(), kind: 'manager',
+        name: form.name.trim(), email: form.email.trim(), phone: form.mobile.trim(),
+        role: 'branch_manager', branchId, pin: form.pin,
       }))
-      toast.success(`Branch Manager "${form.name}" created — PIN ${form.pin}`, { title: 'User created' })
+        .unwrap()
+        .then((user) => {
+          const pin = user?.pin
+          toast.success(
+            pin ? `Branch Manager "${form.name}" created — PIN ${pin}` : `Branch Manager "${form.name}" created.`,
+            { title: 'User created' },
+          )
+        })
+        .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not create user.'))
     } else {
       dispatch(addStaff({
-        id: `STF-${Date.now()}`, name: form.name.trim(), firstName: form.name.trim().split(' ')[0],
-        role: 'Sales Executive', branchId, branchName, email: form.email.trim(),
-        phone: form.mobile.trim(), employeeId: form.employeeId.trim(), pin: form.pin,
-        avatarColor: pickColor(), joinDate: todayISO(), status: form.status,
-        assignedLeads: 0, wonLeads: 0, conversionRate: 0, revenue: 0, target: 0,
-        achievement: 0, incentiveEarned: 0, performanceScore: 50, rating: 0,
+        name: form.name.trim(), role: 'Sales Executive', branchId, branchName,
+        email: form.email.trim(), phone: form.mobile.trim(), avatarColor: pickColor(),
+        status: form.status, pin: form.pin,
       }))
-      toast.success(`Sales Staff "${form.name}" created — PIN ${form.pin}`, { title: 'User created' })
+        .unwrap()
+        .then((user) => {
+          const pin = user?.pin
+          toast.success(
+            pin ? `Sales Staff "${form.name}" created — PIN ${pin}` : `Sales Staff "${form.name}" created.`,
+            { title: 'User created' },
+          )
+        })
+        .catch((err) => toast.error(typeof err === 'string' ? err : 'Could not create user.'))
     }
     setFormOpen(false)
   }
@@ -227,7 +280,11 @@ export default function Users() {
         </div>
       </div>
 
-      {paged.length === 0 ? (
+      {loading && paged.length === 0 ? (
+        <div className="card">
+          <EmptyState icon={FiUsers} title="Loading users…" description="Fetching system users from the server." className="py-16" />
+        </div>
+      ) : paged.length === 0 ? (
         <div className="card">
           <EmptyState icon={FiUsers} title="No users found" description="Try adjusting your search or filters." className="py-16" />
         </div>
@@ -246,6 +303,7 @@ export default function Users() {
               onEdit={openEdit}
               onToggle={handleToggle}
               onResetPin={handleResetPin}
+              onDelete={(x) => setDeleteTarget(x)}
               onView={(x) => navigate(`/staff/${x.id}`)}
             />
           ))}
@@ -259,18 +317,30 @@ export default function Users() {
         onClose={() => setFormOpen(false)}
         onSubmit={handleSubmit}
         member={editing}
+        branchOptions={branchOptions}
         lockBranch={isBranchManager}
         defaultBranchId={isBranchManager ? authUser?.branchId : undefined}
         canCreateManager={isAdmin}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
+        title="Delete user?"
+        description={`This permanently removes ${deleteTarget?.name || 'this user'} from the system. This action cannot be undone.`}
+        confirmLabel="Delete User"
+        tone="danger"
       />
     </motion.div>
   )
 }
 
 /* ---------------- User card ---------------- */
-function UserCard({ user, canManage, onEdit, onToggle, onResetPin, onView }) {
+function UserCard({ user, canManage, onEdit, onToggle, onResetPin, onDelete, onView }) {
   const active = user.status === 'active'
   const manageable = canManage && user.editable
+  const [showPin, setShowPin] = useState(false)
   return (
     <motion.div
       variants={{ hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0 } }}
@@ -307,17 +377,46 @@ function UserCard({ user, canManage, onEdit, onToggle, onResetPin, onView }) {
 
       <p className="text-xs font-medium text-ink-soft dark:text-slate-400">
         Last login:{' '}
-        <span className="text-ink dark:text-slate-200">{formatDate(user.lastActive, 'dd MMM yyyy, hh:mm aaa')}</span>
+        <span className="text-ink dark:text-slate-200">
+          {user.lastActive ? formatDate(user.lastActive, 'dd MMM yyyy, hh:mm aaa') : '—'}
+        </span>
       </p>
 
+      {user.pin && (
+        <div className="flex items-center gap-2 rounded-lg bg-surface-muted/60 px-3 py-2 text-xs font-medium text-ink-soft dark:bg-slate-800/50 dark:text-slate-400">
+          <FiKey className="h-3.5 w-3.5 shrink-0" />
+          <span>Login PIN</span>
+          <span className="font-mono text-sm font-bold tracking-[0.3em] text-ink dark:text-slate-100">
+            {showPin ? user.pin : '••••••'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowPin((s) => !s)}
+            aria-label={showPin ? 'Hide PIN' : 'Show PIN'}
+            aria-pressed={showPin}
+            className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-brand-600 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-slate-800"
+          >
+            {showPin ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
+            {showPin ? 'Hide' : 'Show'}
+          </button>
+        </div>
+      )}
+
       {manageable ? (
-        <div className="mt-auto grid grid-cols-2 gap-3 pt-1">
-          <Button variant="outline" size="sm" leftIcon={<FiKey />} onClick={() => onResetPin(user)}>
-            Reset PIN
-          </Button>
-          <Button variant="outline" size="sm" leftIcon={<FiPower />} onClick={() => onToggle(user)}>
-            {active ? 'Deactivate' : 'Activate'}
-          </Button>
+        <div className="mt-auto space-y-3 pt-1">
+          <div className="grid grid-cols-2 gap-3">
+            <Button variant="outline" size="sm" leftIcon={<FiKey />} onClick={() => onResetPin(user)}>
+              Reset PIN
+            </Button>
+            <Button variant="outline" size="sm" leftIcon={<FiPower />} onClick={() => onToggle(user)}>
+              {active ? 'Deactivate' : 'Activate'}
+            </Button>
+          </div>
+          {user.kind !== 'staff' && (
+            <Button variant="ghost" size="sm" fullWidth leftIcon={<FiTrash2 />} onClick={() => onDelete(user)}>
+              Delete
+            </Button>
+          )}
         </div>
       ) : user.kind === 'staff' ? (
         <div className="mt-auto pt-1">
@@ -340,7 +439,9 @@ const STATUS_OPTS = [
   { value: 'inactive', label: 'Inactive' },
 ]
 
-function UserFormModal({ open, onClose, onSubmit, member, lockBranch, defaultBranchId, canCreateManager = false }) {
+const randomPin = () => String(Math.floor(100000 + Math.random() * 900000))
+
+function UserFormModal({ open, onClose, onSubmit, member, branchOptions = [], lockBranch, defaultBranchId, canCreateManager = false }) {
   const isEdit = Boolean(member)
   // Branch Managers may only create Staff — hide the Branch Manager option.
   const roleOptions = canCreateManager ? ROLE_OPTS : ROLE_OPTS.filter((r) => r.value === 'staff')
@@ -353,9 +454,9 @@ function UserFormModal({ open, onClose, onSubmit, member, lockBranch, defaultBra
     formState: { errors },
   } = useForm({
     defaultValues: {
-      role: 'staff', name: '', mobile: '', email: '', employeeId: '',
+      role: 'staff', name: '', mobile: '', email: '',
       branchId: defaultBranchId || branchOptions[0]?.value || '',
-      pin: '', status: 'active',
+      status: 'active', pin: '',
     },
   })
 
@@ -368,15 +469,14 @@ function UserFormModal({ open, onClose, onSubmit, member, lockBranch, defaultBra
             name: member.name || '',
             mobile: member.phone || '',
             email: member.email || '',
-            employeeId: member.employeeId || member.id || '',
             branchId: member.branchId || defaultBranchId || branchOptions[0]?.value || '',
-            pin: member.pin || '',
             status: member.status || 'active',
+            pin: '',
           }
         : {
-            role: 'staff', name: '', mobile: '', email: '', employeeId: '',
+            role: 'staff', name: '', mobile: '', email: '',
             branchId: defaultBranchId || branchOptions[0]?.value || '',
-            pin: randomPin(), status: 'active',
+            status: 'active', pin: randomPin(),
           },
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -393,8 +493,8 @@ function UserFormModal({ open, onClose, onSubmit, member, lockBranch, defaultBra
         isEdit
           ? 'Update this user’s details.'
           : canCreateManager
-            ? 'Create a new Sales Staff or Branch Manager. They sign in with the generated 6-digit PIN.'
-            : 'Create a new Sales Staff member. They sign in with the generated 6-digit PIN.'
+            ? 'Create a new Sales Staff or Branch Manager. They sign in with the 6-digit PIN you set below.'
+            : 'Create a new Sales Staff member. They sign in with the 6-digit PIN you set below.'
       }
       size="lg"
       footer={
@@ -418,9 +518,17 @@ function UserFormModal({ open, onClose, onSubmit, member, lockBranch, defaultBra
         <Input label="Full Name" error={errors.name?.message} {...register('name', { required: 'Full name is required' })} />
         <Input label="Mobile Number" type="tel" placeholder="+91 9XXXX XXXXX" error={errors.mobile?.message} {...register('mobile', { required: 'Mobile number is required' })} />
         <Input label="Email" type="email" error={errors.email?.message} {...register('email', { required: 'Email is required', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' } })} />
-        <Input label="Employee ID" placeholder="e.g. EMP-1024" error={errors.employeeId?.message} {...register('employeeId', { required: 'Employee ID is required' })} />
         <Select label={roleVal === 'branch_manager' ? 'Branch' : 'Assigned Branch'} options={branchOptions} disabled={lockBranch} hint={lockBranch ? 'Locked to your branch' : undefined} {...register('branchId', { required: true })} />
-        <Input label="6-Digit PIN" maxLength={6} inputMode="numeric" error={errors.pin?.message} {...register('pin', { required: 'PIN is required', pattern: { value: /^\d{6}$/, message: 'PIN must be exactly 6 digits' } })} />
+        {!isEdit && (
+          <Input
+            label="6-Digit Login PIN"
+            maxLength={6}
+            inputMode="numeric"
+            hint="The user signs in with this PIN"
+            error={errors.pin?.message}
+            {...register('pin', { required: 'PIN is required', pattern: { value: /^\d{6}$/, message: 'PIN must be exactly 6 digits' } })}
+          />
+        )}
       </form>
     </Modal>
   )

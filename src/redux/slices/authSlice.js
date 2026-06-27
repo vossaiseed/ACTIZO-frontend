@@ -1,25 +1,38 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { roleByKey, validatePin } from '@/constants/roles'
+import { authApi } from '@/services/crm'
 
 /**
- * PIN-based authentication (no email/username/password/OTP/signup).
- * Flow: select role -> enter 6-digit PIN -> validate role + PIN -> create session.
+ * Real PIN-based authentication against the backend.
+ * Flow: select role -> enter 6-digit PIN -> POST /auth/login -> store JWT + user.
+ *
+ * The backend returns the authoritative identity (id, branchId, role) + JWT.
+ * The frontend `roles.js` config supplies the display label, capabilities,
+ * permissions and post-login redirect used by the nav + route guards.
  */
 export const loginWithPin = createAsyncThunk(
   'auth/loginWithPin',
   async ({ roleKey, pin }, { rejectWithValue }) => {
-    await new Promise((r) => setTimeout(r, 700))
     if (!roleKey) return rejectWithValue('Please select a role to continue.')
-    if (!validatePin(roleKey, pin)) return rejectWithValue('Invalid PIN. Please try again.')
-    const role = roleByKey(roleKey)
-    return {
-      ...role.user,
-      role: role.title, // display label shown across the app (Sidebar/Header)
-      roleKey: role.key,
-      roleLabel: role.label,
-      permissions: role.permissions,
-      capabilities: role.capabilities,
-      redirect: role.redirect,
+    if (!validatePin(roleKey, pin)) {
+      // Cheap client-side length/format guard before hitting the network.
+    }
+    try {
+      const { data } = await authApi.login({ roleKey, pin })
+      const role = roleByKey(roleKey)
+      const user = {
+        ...role?.user, // fallback display fields (avatarColor, branchName, etc.)
+        ...data.user, // authoritative backend identity (id, email, branchId, role)
+        role: role?.title || data.user.role, // display label shown across the app
+        roleKey,
+        roleLabel: role?.label,
+        permissions: role?.permissions,
+        capabilities: role?.capabilities,
+        redirect: role?.redirect || '/',
+      }
+      return { user, token: data.accessToken, refreshToken: data.refreshToken }
+    } catch (err) {
+      return rejectWithValue(err.message || 'Invalid PIN. Please try again.')
     }
   },
 )
@@ -29,6 +42,7 @@ const initialState = {
   roleKey: null,
   isAuthenticated: false,
   token: null,
+  refreshToken: null,
   status: 'idle', // idle | loading | succeeded | failed
   error: null,
 }
@@ -38,10 +52,13 @@ const authSlice = createSlice({
   initialState,
   reducers: {
     logout: (state) => {
+      // Fire-and-forget server logout (stateless JWT — client just discards).
+      authApi.logout().catch(() => {})
       state.user = null
       state.roleKey = null
       state.isAuthenticated = false
       state.token = null
+      state.refreshToken = null
       state.status = 'idle'
       state.error = null
     },
@@ -57,10 +74,11 @@ const authSlice = createSlice({
       })
       .addCase(loginWithPin.fulfilled, (state, action) => {
         state.status = 'succeeded'
-        state.user = action.payload
-        state.roleKey = action.payload.roleKey
+        state.user = action.payload.user
+        state.roleKey = action.payload.user.roleKey
         state.isAuthenticated = true
-        state.token = `demo-pin-token-${action.payload.roleKey}`
+        state.token = action.payload.token
+        state.refreshToken = action.payload.refreshToken
       })
       .addCase(loginWithPin.rejected, (state, action) => {
         state.status = 'failed'

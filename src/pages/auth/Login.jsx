@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FiArrowRight, FiLock, FiAlertCircle, FiShield } from 'react-icons/fi'
+import { FiArrowRight, FiLock, FiAlertCircle, FiShield, FiEye, FiEyeOff } from 'react-icons/fi'
 import { loginWithPin, selectAuthStatus } from '@/redux/slices/authSlice'
 import { ROLES } from '@/constants/roles'
 import { useToast } from '@/hooks/useToast'
@@ -94,6 +94,7 @@ export default function Login() {
   const [roleKey, setRoleKey] = useState(ROLES[0].key)
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
+  const [showPins, setShowPins] = useState(false)
 
   const selectedRole = ROLES.find((r) => r.key === roleKey)
 
@@ -227,9 +228,21 @@ export default function Login() {
 
         {/* Demo PINs */}
         <div className="relative mt-6 border-t border-line pt-5 dark:border-slate-800">
-          <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-ink-faint dark:text-slate-500">
-            Demo access — tap to fill
-          </p>
+          <div className="mb-2.5 flex items-center justify-center gap-2">
+            <p className="text-center text-[11px] font-semibold uppercase tracking-wider text-ink-faint dark:text-slate-500">
+              Demo access — tap to fill
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowPins((s) => !s)}
+              aria-label={showPins ? 'Hide demo PINs' : 'Show demo PINs'}
+              aria-pressed={showPins}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-brand-600 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-slate-800"
+            >
+              {showPins ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
+              {showPins ? 'Hide' : 'Show'}
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {ROLES.map((role) => (
               <button
@@ -244,7 +257,7 @@ export default function Login() {
               >
                 <span className="block text-[10px] font-medium text-ink-soft dark:text-slate-400">{role.label}</span>
                 <span className="block font-display text-sm font-bold tracking-widest text-brand-600 dark:text-brand-300">
-                  {role.pin}
+                  {showPins ? role.pin : '••••••'}
                 </span>
               </button>
             ))}

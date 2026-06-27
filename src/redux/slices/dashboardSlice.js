@@ -1,36 +1,34 @@
-import { createSlice } from '@reduxjs/toolkit'
-import {
-  dashboardKpis,
-  kpiDeltas,
-  leadPipeline,
-  salesPerformance,
-  monthlyConversion,
-  branchPerformance,
-  branchPerformanceCards,
-  staffPerformance,
-  dashboardRevenueTrend,
-  recentActivities,
-} from '../../data/dashboard'
-import { recentLeads, upcomingFollowUps } from '../../data/leads'
-import { topPerformers } from '../../data/staff'
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
+import { dashboardApi } from '@/services/crm'
+
+/* ----------------------------- Thunks ----------------------------- */
+export const fetchDashboard = createAsyncThunk('dashboard/fetch', async (_, { rejectWithValue }) => {
+  try {
+    const { data } = await dashboardApi.overview()
+    return data
+  } catch (err) {
+    return rejectWithValue(err.message)
+  }
+})
 
 const initialState = {
-  kpis: dashboardKpis,
-  deltas: kpiDeltas,
+  kpis: {},
+  deltas: {},
   charts: {
-    revenueTrend: dashboardRevenueTrend,
-    leadPipeline,
-    salesPerformance,
-    monthlyConversion,
-    branchPerformance,
-    staffPerformance,
+    revenueTrend: [],
+    leadPipeline: [],
+    salesPerformance: [],
+    monthlyConversion: [],
+    branchPerformance: [],
+    staffPerformance: [],
   },
-  branchPerformanceCards,
-  recentActivities,
-  recentLeads,
-  topPerformers: topPerformers.slice(0, 5),
-  upcomingFollowUps,
+  branchPerformanceCards: [],
+  recentActivities: [],
+  recentLeads: [],
+  topPerformers: [],
+  upcomingFollowUps: [],
   status: 'idle',
+  error: null,
 }
 
 const dashboardSlice = createSlice({
@@ -40,6 +38,38 @@ const dashboardSlice = createSlice({
     setStatus: (state, action) => {
       state.status = action.payload
     },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchDashboard.pending, (state) => {
+        if (!Object.keys(state.kpis || {}).length) state.status = 'loading'
+      })
+      .addCase(fetchDashboard.fulfilled, (state, action) => {
+        const d = action.payload || {}
+        const charts = d.charts || {}
+        state.status = 'succeeded'
+        state.kpis = d.kpis || {}
+        state.charts = {
+          revenueTrend: charts.revenueTrend || [],
+          leadPipeline: charts.leadPipeline || [],
+          branchPerformance: charts.branchPerformance || [],
+          // Keys the backend does not provide — kept empty so the page never crashes.
+          salesPerformance: [],
+          monthlyConversion: [],
+          staffPerformance: [],
+        }
+        state.branchPerformanceCards = charts.branchPerformance || []
+        state.recentActivities = d.recentActivities || []
+        state.recentLeads = d.recentLeads || []
+        state.topPerformers = d.topPerformers || []
+        state.upcomingFollowUps = d.upcomingFollowUps || []
+        // deltas not provided by backend — keep as empty object.
+        state.deltas = {}
+      })
+      .addCase(fetchDashboard.rejected, (state, action) => {
+        state.status = 'failed'
+        state.error = action.payload
+      })
   },
 })
 

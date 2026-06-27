@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { useForm } from 'react-hook-form'
@@ -23,6 +23,7 @@ import {
 import { cn } from '@/utils/cn'
 import { formatDate, formatShortDate, formatRelativeTime } from '@/utils/format'
 import { selectLeads, addFollowUp } from '@/redux/slices/leadSlice'
+import { followupsApi } from '@/services/crm'
 import { useToast } from '@/hooks/useToast'
 
 import PageHeader from '@/components/common/PageHeader'
@@ -137,11 +138,15 @@ function FeedItem({ fu, isLast }) {
           <StatusBadge status={fu.status} size="sm" withDot />
         </div>
 
-        {/* Product / branch context */}
-        <p className="mt-1 truncate text-xs text-ink-soft dark:text-slate-400">
-          {fu.product}
-          {fu.branchName ? <span className="text-ink-faint dark:text-slate-500"> · {fu.branchName}</span> : null}
-        </p>
+        {/* Lead ref / branch context (rows carry the lead relation, not product) */}
+        {fu.leadRef || fu.product || fu.branchName ? (
+          <p className="mt-1 truncate text-xs text-ink-soft dark:text-slate-400">
+            {fu.product || fu.leadRef || '—'}
+            {fu.branchName ? (
+              <span className="text-ink-faint dark:text-slate-500"> · {fu.branchName}</span>
+            ) : null}
+          </p>
+        ) : null}
 
         {fu.remark ? (
           <p className="mt-2 text-sm leading-relaxed text-ink-soft dark:text-slate-300">
@@ -217,7 +222,7 @@ function FeedGroup({ title, icon: Icon, tone, items }) {
 /*  Add Follow-Up Modal                                               */
 /* ------------------------------------------------------------------ */
 
-function AddFollowUpModal({ open, onClose, leadOptions, leadMap }) {
+function AddFollowUpModal({ open, onClose, leadOptions, leadMap, onAdded }) {
   const dispatch = useDispatch()
   const toast = useToast()
 
@@ -242,7 +247,7 @@ function AddFollowUpModal({ open, onClose, leadOptions, leadMap }) {
     onClose()
   }
 
-  const onSubmit = (data) => {
+  const onSubmit = async (data) => {
     const lead = leadMap[data.leadId]
     if (!lead) {
       toast.error('Please select a valid lead.')
@@ -250,7 +255,6 @@ function AddFollowUpModal({ open, onClose, leadOptions, leadMap }) {
     }
 
     const followUp = {
-      id: `fu-${Date.now()}`,
       type: data.type,
       status: data.status,
       date: data.date,
@@ -259,9 +263,30 @@ function AddFollowUpModal({ open, onClose, leadOptions, leadMap }) {
       by: lead.staffName && lead.staffName !== 'Unassigned' ? lead.staffName : 'Sales',
     }
 
-    dispatch(addFollowUp({ leadId: data.leadId, followUp }))
-    toast.success(`Follow-up scheduled for ${lead.name}.`, { title: 'Follow-up added' })
-    close()
+    try {
+      // Persist via the lead follow-up endpoint (returns the created, camelCased row).
+      const created = await dispatch(
+        addFollowUp({ leadId: data.leadId, followUp }),
+      ).unwrap()
+
+      // Reflect it in this page's local feed immediately.
+      onAdded?.({
+        id: created?.id ?? `fu-${Date.now()}`,
+        ...created,
+        ...followUp,
+        leadId: data.leadId,
+        leadName: lead.name,
+        leadRef: lead.ref ?? created?.leadRef,
+        product: lead.product,
+        branchName: lead.branchName,
+        staffName: lead.staffName,
+      })
+
+      toast.success(`Follow-up scheduled for ${lead.name}.`, { title: 'Follow-up added' })
+      close()
+    } catch {
+      toast.error('Could not add the follow-up. Please try again.')
+    }
   }
 
   return (
@@ -370,7 +395,8 @@ function UpcomingItem({ fu }) {
           {fu.leadName}
         </p>
         <p className="truncate text-xs text-ink-soft dark:text-slate-400">
-          {fu.type} · {fu.product}
+          {fu.type}
+          {fu.product || fu.leadRef ? ` · ${fu.product || fu.leadRef}` : ''}
         </p>
       </div>
 
@@ -396,21 +422,28 @@ export default function FollowUp() {
 
   const today = todayISO()
 
-  /* --- flat list across all leads --- */
-  const allFollowUps = useMemo(
-    () =>
-      leads.flatMap((lead) =>
-        (lead.followUps || []).map((fu) => ({
-          ...fu,
-          leadId: lead.id,
-          leadName: lead.name,
-          product: lead.product,
-          branchName: lead.branchName,
-          staffName: lead.staffName,
-        })),
-      ),
-    [leads],
-  )
+  /* --- live follow-ups from the backend --- */
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    followupsApi
+      .list({ limit: 1000 })
+      .then(({ data }) => {
+        if (live) {
+          setItems(data || [])
+          setLoading(false)
+        }
+      })
+      .catch(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+  }, [])
+
+  /* --- flat list (already flattened + camelCased by the API) --- */
+  const allFollowUps = items
 
   /* --- KPIs --- */
   const kpis = useMemo(() => {
@@ -430,7 +463,7 @@ export default function FollowUp() {
       if (typeFilter !== 'All' && f.type !== typeFilter) return false
       if (statusFilter !== 'All' && f.status !== statusFilter) return false
       if (term) {
-        const hay = `${f.leadName} ${f.product}`.toLowerCase()
+        const hay = `${f.leadName || ''} ${f.leadRef || ''} ${f.product || ''} ${f.remark || ''}`.toLowerCase()
         if (!hay.includes(term)) return false
       }
       return true
@@ -544,7 +577,20 @@ export default function FollowUp() {
         {/* Activity feed */}
         <div className="lg:col-span-2">
           <Card>
-            {isEmpty ? (
+            {loading ? (
+              <div className="space-y-6">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="flex gap-4">
+                    <div className="h-11 w-11 shrink-0 animate-pulse rounded-2xl bg-surface-muted dark:bg-slate-800" />
+                    <div className="flex-1 space-y-2.5">
+                      <div className="h-4 w-1/3 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+                      <div className="h-3 w-1/4 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+                      <div className="h-3 w-2/3 animate-pulse rounded bg-surface-muted dark:bg-slate-800" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : isEmpty ? (
               <EmptyState
                 icon={FiPhoneCall}
                 title="No follow-ups found"
@@ -643,6 +689,7 @@ export default function FollowUp() {
         onClose={() => setModalOpen(false)}
         leadOptions={leadOptions}
         leadMap={leadMap}
+        onAdded={(fu) => setItems((prev) => [fu, ...prev])}
       />
     </motion.div>
   )
