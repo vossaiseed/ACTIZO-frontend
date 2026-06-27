@@ -104,6 +104,13 @@ export const targetsApi = {
   allocateStaff: (branchTargetId, allocations) => http.put(`/targets/branch/${branchTargetId}/staff`, { allocations }),
 }
 
+/* ---------------- Target increase requests (Branch Manager → Admin) ------------- */
+export const targetRequestsApi = {
+  list: () => http.get('/target-requests'),
+  create: (body) => http.post('/target-requests', body),
+  resolve: (id, body) => http.patch(`/target-requests/${id}`, body),
+}
+
 /* -------------------------- Incentives -------------------------- */
 // Read-only: incentives are computed automatically from targets + completed sales.
 export const incentivesApi = {
