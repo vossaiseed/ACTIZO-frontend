@@ -104,11 +104,14 @@ export const targetsApi = {
   allocateStaff: (branchTargetId, allocations) => http.put(`/targets/branch/${branchTargetId}/staff`, { allocations }),
 }
 
-/* ---------------- Target increase requests (Branch Manager → Admin) ------------- */
-export const targetRequestsApi = {
-  list: () => http.get('/target-requests'),
-  create: (body) => http.post('/target-requests', body),
-  resolve: (id, body) => http.patch(`/target-requests/${id}`, body),
+/* -------------------------- Flash Targets ----------------------- */
+export const flashTargetsApi = {
+  list: () => http.get('/flash-targets'),
+  activeForStaff: () => http.get('/flash-targets/active-for-staff'),
+  create: (body) => http.post('/flash-targets', body),
+  submitRequest: (id, body) => http.post(`/flash-targets/${id}/requests`, body),
+  resolveRequest: (requestId, body) => http.patch(`/flash-targets/requests/${requestId}`, body),
+  distribute: (id, allocations) => http.put(`/flash-targets/${id}/staff`, { allocations }),
 }
 
 /* -------------------------- Incentives -------------------------- */

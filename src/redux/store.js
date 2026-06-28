@@ -9,6 +9,7 @@ import leadReducer from './slices/leadSlice'
 import salesReducer from './slices/salesSlice'
 import productReducer from './slices/productSlice'
 import targetReducer from './slices/targetSlice'
+import flashReducer from './slices/flashSlice'
 import incentiveReducer from './slices/incentiveSlice'
 import branchReducer from './slices/branchSlice'
 import staffReducer from './slices/staffSlice'
@@ -23,6 +24,7 @@ const rootReducer = combineReducers({
   sales: salesReducer,
   products: productReducer,
   targets: targetReducer,
+  flash: flashReducer,
   incentives: incentiveReducer,
   branches: branchReducer,
   staff: staffReducer,

@@ -17,11 +17,6 @@ import {
   FiLayers,
   FiShare2,
   FiTrash2,
-  FiTrendingUp,
-  FiInbox,
-  FiSend,
-  FiCheck,
-  FiX,
 } from 'react-icons/fi'
 
 import {
@@ -34,15 +29,13 @@ import {
   allocateStaff,
   fetchTargets,
   fetchTargetSummary,
-  fetchTargetRequests,
-  createTargetRequest,
-  resolveTargetRequest,
-  selectTargetRequests,
 } from '@/redux/slices/targetSlice'
 import { fetchProducts, selectProductOptions, selectProducts } from '@/redux/slices/productSlice'
 import { fetchBranches, selectBranchOptions } from '@/redux/slices/branchSlice'
 import { fetchStaff, selectStaffOptions, selectStaff } from '@/redux/slices/staffSlice'
 import { selectRoleKey, selectUser } from '@/redux/slices/authSlice'
+import { fetchFlashTargets, selectFlash } from '@/redux/slices/flashSlice'
+import FlashTargetsPanel from '@/pages/flash/FlashTargets'
 import { TARGET_STATUSES } from '@/data/targets'
 
 import { cn } from '@/utils/cn'
@@ -104,6 +97,7 @@ const TAB_META = {
   general: { label: 'General', icon: <FiLayers /> },
   special: { label: 'Special', icon: <FiZap /> },
   project: { label: 'Project', icon: <FiBriefcase /> },
+  flash: { label: 'Flash', icon: <FiZap /> },
 }
 
 /* The filter→item key map differs per tab (esp. the "type" field). */
@@ -451,15 +445,19 @@ function AllocationModal({
   }, [open])
 
   const list = entities || []
+  const floors = existing || {} // already-assigned quantities — values can only go up
   const total = list.reduce((s, e) => s + (Number(values[e.id]) || 0), 0)
   const cap = Number(parentTarget) || 0
   const remaining = cap - total
   const over = total > cap
+  // No-decrease rule: a value may not drop below its already-assigned quantity.
+  const belowFloor = list.some((e) => Number(values[e.id] || 0) < Number(floors[e.id] || 0))
 
   const setQty = (id, val) =>
     setValues((prev) => ({ ...prev, [id]: val }))
 
   const handleSave = () => {
+    if (over || belowFloor) return
     const allocations = list
       .map((e) => ({ [allocationKey]: e.id, targetQty: Number(values[e.id]) || 0 }))
       .filter((a) => a.targetQty > 0)
@@ -482,7 +480,7 @@ function AllocationModal({
             type="button"
             onClick={handleSave}
             loading={saving}
-            disabled={over || saving}
+            disabled={over || belowFloor || saving}
             leftIcon={<FiShare2 />}
           >
             Save Allocation
@@ -524,6 +522,12 @@ function AllocationModal({
           </p>
         )}
 
+        {belowFloor && (
+          <p className="text-xs font-medium text-rose-600 dark:text-rose-400">
+            An assigned target can only be increased, never reduced. Restore any value to at least its current amount.
+          </p>
+        )}
+
         {list.length === 0 ? (
           <p className="rounded-xl border border-line bg-surface-muted/40 px-4 py-6 text-center text-sm text-ink-soft dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
             No {entityLabel.toLowerCase()}s available to allocate to.
@@ -534,21 +538,30 @@ function AllocationModal({
               <span>{entityLabel}</span>
               <span className="text-right">Target Qty</span>
             </div>
-            {list.map((e) => (
-              <div key={e.id} className="grid grid-cols-[1fr_140px] items-center gap-3">
-                <span className="truncate text-sm font-medium text-ink dark:text-slate-200">
-                  {e.name}
-                </span>
-                <Input
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={values[e.id] ?? ''}
-                  onChange={(ev) => setQty(e.id, ev.target.value)}
-                  className="text-right"
-                />
-              </div>
-            ))}
+            {list.map((e) => {
+              const floor = Number(floors[e.id] || 0)
+              const below = Number(values[e.id] || 0) < floor
+              return (
+                <div key={e.id} className="grid grid-cols-[1fr_140px] items-center gap-3">
+                  <span className="truncate text-sm font-medium text-ink dark:text-slate-200">
+                    {e.name}
+                    {floor > 0 && (
+                      <span className="ml-2 text-[11px] font-normal text-ink-faint dark:text-slate-500">
+                        min {floor}
+                      </span>
+                    )}
+                  </span>
+                  <Input
+                    type="number"
+                    min={floor}
+                    placeholder="0"
+                    value={values[e.id] ?? ''}
+                    onChange={(ev) => setQty(e.id, ev.target.value)}
+                    className={cn('text-right', below && 'border-rose-400 focus:border-rose-400')}
+                  />
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -621,7 +634,7 @@ function TargetVsAchievementChart({ tab, rows }) {
 /* ------------------------------------------------------------------ */
 
 function useColumns(tab, opts = {}) {
-  const { onAllocate, canAllocate, onRequest, canRequest } = opts
+  const { onAllocate, canAllocate } = opts
   return useMemo(() => {
     if (tab === 'general') {
       const columns = [
@@ -733,33 +746,26 @@ function useColumns(tab, opts = {}) {
         },
       ]
 
-      if (onAllocate || onRequest) {
+      if (onAllocate) {
         columns.push({
           key: 'actions',
-          header: 'Actions',
+          header: 'Allocate',
           align: 'right',
           render: (r) => {
             // Product target -> allocate to branches; Branch target -> to staff.
             const level = r.scope === 'Admin' ? 'branch' : r.scope === 'Branch' ? 'staff' : null
-            const showAllocate = level && canAllocate?.(r)
-            // Branch Manager can request a higher target on their own branch target.
-            const showRequest = r.scope === 'Branch' && canRequest?.(r)
-            if (!showAllocate && !showRequest) {
+            if (!level || !canAllocate?.(r)) {
               return <span className="text-ink-faint dark:text-slate-600">—</span>
             }
             return (
-              <div className="flex justify-end gap-2">
-                {showAllocate && (
-                  <Button variant="outline" size="sm" leftIcon={<FiShare2 />} onClick={() => onAllocate(r, level)}>
-                    {level === 'branch' ? 'Branches' : 'Staff'}
-                  </Button>
-                )}
-                {showRequest && (
-                  <Button variant="ghost" size="sm" leftIcon={<FiTrendingUp />} onClick={() => onRequest(r)}>
-                    Request
-                  </Button>
-                )}
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<FiShare2 />}
+                onClick={() => onAllocate(r, level)}
+              >
+                {level === 'branch' ? 'Branches' : 'Staff'}
+              </Button>
             )
           },
         })
@@ -965,6 +971,7 @@ export default function Targets() {
   const toast = useToast()
   const { general, special, project, summary, activeTab, filters, status } =
     useSelector(selectTargets)
+  const { campaigns: flashCampaigns } = useSelector(selectFlash)
 
   // Branch / staff filter options sourced from the backend (real ids).
   const branchOptions = useSelector(selectBranchOptions) // [{ value, label }]
@@ -992,10 +999,6 @@ export default function Targets() {
   const [alloc, setAlloc] = useState({ open: false, level: null, row: null })
   const [allocSaving, setAllocSaving] = useState(false)
 
-  // Target-increase request state (Branch Manager raises; Admin reviews).
-  const requests = useSelector(selectTargetRequests)
-  const [reqModal, setReqModal] = useState({ open: false, row: null })
-
   // Load all tabs + summary + reference data (products/branches/staff) on mount.
   useEffect(() => {
     dispatch(fetchTargets('general'))
@@ -1005,8 +1008,8 @@ export default function Targets() {
     dispatch(fetchProducts())
     dispatch(fetchBranches())
     dispatch(fetchStaff())
-    if (roleKey === 'admin' || roleKey === 'branch_manager') dispatch(fetchTargetRequests())
-  }, [dispatch, roleKey])
+    dispatch(fetchFlashTargets())
+  }, [dispatch])
 
   const tabData = { general, special, project }
   const rawRows = tabData[activeTab] ?? []
@@ -1028,19 +1031,10 @@ export default function Targets() {
     [],
   )
 
-  // A Branch Manager may request a higher target on their own branch target.
-  const canRequest = useMemo(
-    () => (row) => isManager && row.scope === 'Branch' && user?.branchId === row.branchId,
-    [isManager, user?.branchId],
-  )
-  const openRequest = useMemo(() => (row) => setReqModal({ open: true, row }), [])
-
-  // Only attach allocation/request handlers on the general tab.
+  // Only attach allocation handlers on the general tab.
   const columns = useColumns(
     activeTab,
-    activeTab === 'general'
-      ? { onAllocate: openAllocate, canAllocate, onRequest: openRequest, canRequest }
-      : {},
+    activeTab === 'general' ? { onAllocate: openAllocate, canAllocate } : {},
   )
 
   /* Apply search + filters + sort to the active tab list. */
@@ -1062,6 +1056,7 @@ export default function Targets() {
     { key: 'general', label: TAB_META.general.label, icon: TAB_META.general.icon, count: general.length },
     { key: 'special', label: TAB_META.special.label, icon: TAB_META.special.icon, count: special.length },
     { key: 'project', label: TAB_META.project.label, icon: TAB_META.project.icon, count: project.length },
+    { key: 'flash', label: TAB_META.flash.label, icon: TAB_META.flash.icon, count: (flashCampaigns || []).length },
   ]
 
   const handleSort = (key) => {
@@ -1234,29 +1229,6 @@ export default function Targets() {
     }
   }
 
-  /* ----- Target increase requests ----- */
-  const handleCreateRequest = async (payload) => {
-    try {
-      await dispatch(createTargetRequest(payload)).unwrap()
-      toast.success('Your request was sent to the admin.', { title: 'Request sent' })
-      setReqModal({ open: false, row: null })
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : 'Failed to send request.', { title: 'Request failed' })
-    }
-  }
-
-  const handleResolveRequest = async (id, decision, extra = {}) => {
-    try {
-      await dispatch(resolveTargetRequest({ id, status: decision, ...extra })).unwrap()
-      dispatch(fetchTargetSummary())
-      toast.success(`Request ${decision.toLowerCase()}.`, { title: 'Request updated' })
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : 'Failed to update request.', { title: 'Update failed' })
-    }
-  }
-
-  const visibleRequests = requests || []
-
   const typeOptions = TYPE_OPTIONS_BY_TAB[activeTab]
   const typeFilterLabel =
     activeTab === 'general' ? 'Scope' : 'Type'
@@ -1291,8 +1263,8 @@ export default function Targets() {
               Export
             </Button>
             {/* Creating a general (Product) target is Admin-only. Special/Project
-                creation stays available on their tabs. */}
-            {(activeTab !== 'general' || isAdmin) && (
+                creation stays available on their tabs. Flash has its own action. */}
+            {activeTab !== 'flash' && (activeTab !== 'general' || isAdmin) && (
               <Button leftIcon={<FiPlus />} onClick={() => setModalOpen(true)}>
                 New Target
               </Button>
@@ -1301,23 +1273,20 @@ export default function Targets() {
         }
       />
 
-      {/* Summary KPIs */}
-      <div className="grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
-        {kpis.map((k) => (
-          <KPICard
-            key={k.label}
-            label={k.label}
-            value={k.value}
-            icon={k.icon}
-            tone={k.tone}
-            loading={loading}
-          />
-        ))}
-      </div>
-
-      {/* Target increase requests — Admin reviews & resolves; Manager tracks own */}
-      {(isAdmin || isManager) && visibleRequests.length > 0 && (
-        <TargetRequestsPanel requests={visibleRequests} isAdmin={isAdmin} onResolve={handleResolveRequest} />
+      {/* Summary KPIs (Flash tab shows its own KPIs inside the panel) */}
+      {activeTab !== 'flash' && (
+        <div className="grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
+          {kpis.map((k) => (
+            <KPICard
+              key={k.label}
+              label={k.label}
+              value={k.value}
+              icon={k.icon}
+              tone={k.tone}
+              loading={loading}
+            />
+          ))}
+        </div>
       )}
 
       {/* Tabs */}
@@ -1333,6 +1302,10 @@ export default function Targets() {
           transition={{ duration: 0.3, ease: 'easeOut' }}
           className="space-y-6"
         >
+          {activeTab === 'flash' ? (
+            <FlashTargetsPanel />
+          ) : (
+          <>
           <TargetVsAchievementChart tab={activeTab} rows={chartRows} />
 
           {/* Filters toolbar */}
@@ -1428,6 +1401,8 @@ export default function Targets() {
                 : 'There are no targets in this category yet. Create one to get started.'
             }
           />
+          </>
+          )}
         </motion.div>
       </AnimatePresence>
 
@@ -1455,172 +1430,6 @@ export default function Targets() {
           allocationKey={allocConfig.allocationKey}
         />
       )}
-
-      <RequestTargetModal
-        open={reqModal.open}
-        target={reqModal.row}
-        onClose={() => setReqModal({ open: false, row: null })}
-        onSubmit={handleCreateRequest}
-      />
     </motion.div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Target increase requests — panel (Admin reviews) + modal (Manager) */
-/* ------------------------------------------------------------------ */
-
-function TargetRequestsPanel({ requests, isAdmin, onResolve }) {
-  const pending = requests.filter((r) => r.status === 'Pending')
-  const history = requests.filter((r) => r.status !== 'Pending').slice(0, 5)
-  return (
-    <div className="card p-5 sm:p-6">
-      <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
-          <FiInbox className="h-[18px] w-[18px]" />
-        </span>
-        <div>
-          <h3 className="font-display text-base font-semibold text-ink dark:text-slate-100">
-            {isAdmin ? 'Target Increase Requests' : 'My Target Requests'}
-          </h3>
-          <p className="text-sm text-ink-soft dark:text-slate-400">
-            {isAdmin
-              ? `${pending.length} pending review`
-              : 'Status of the higher-target requests you sent to the admin'}
-          </p>
-        </div>
-      </div>
-
-      <ul className="mt-4 space-y-3">
-        {[...pending, ...history].map((r) => (
-          <li
-            key={r.id}
-            className="flex flex-col gap-3 rounded-xl border border-line bg-surface-base/50 p-3.5 dark:border-slate-800 dark:bg-slate-800/30 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink dark:text-slate-100">
-                {r.productName || r.product || 'Product'} · {r.branchName || 'Branch'}
-                {isAdmin && r.requester?.name ? (
-                  <span className="font-normal text-ink-soft dark:text-slate-400"> — {r.requester.name}</span>
-                ) : null}
-              </p>
-              <p className="mt-0.5 text-xs text-ink-soft dark:text-slate-400">
-                Current <span className="font-semibold">{r.currentQty}</span> → requested{' '}
-                <span className="font-semibold text-brand-600 dark:text-brand-300">{r.requestedQty}</span>
-                {r.status === 'Approved' && r.approvedQty != null ? ` · approved ${r.approvedQty}` : ''}
-              </p>
-              {r.message ? (
-                <p className="mt-1 truncate text-xs italic text-ink-soft dark:text-slate-400">“{r.message}”</p>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {r.status === 'Pending' ? (
-                isAdmin ? (
-                  <AdminRequestActions req={r} onResolve={onResolve} />
-                ) : (
-                  <StatusBadge status="Pending" withDot />
-                )
-              ) : (
-                <StatusBadge status={r.status === 'Approved' ? 'Completed' : 'Lost'} withDot />
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-// Admin row actions: editable approved quantity (modify) + Approve / Reject.
-function AdminRequestActions({ req, onResolve }) {
-  const [qty, setQty] = useState(req.requestedQty)
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="number"
-        min={Number(req.currentQty) + 1}
-        value={qty}
-        onChange={(e) => setQty(e.target.value)}
-        aria-label="Approved quantity"
-        className="w-20 rounded-lg border border-line bg-surface-base px-2.5 py-1.5 text-sm tabular-nums text-ink focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-      />
-      <Button
-        variant="primary"
-        size="sm"
-        leftIcon={<FiCheck className="h-3.5 w-3.5" />}
-        onClick={() => onResolve(req.id, 'Approved', { approvedQty: Number(qty) || req.requestedQty })}
-      >
-        Approve
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        leftIcon={<FiX className="h-3.5 w-3.5" />}
-        onClick={() => onResolve(req.id, 'Rejected')}
-      >
-        Reject
-      </Button>
-    </div>
-  )
-}
-
-function RequestTargetModal({ open, target, onClose, onSubmit }) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm({
-    defaultValues: { requestedQty: '', message: '' },
-  })
-  useEffect(() => {
-    if (open) reset({ requestedQty: '', message: '' })
-  }, [open, reset])
-
-  const current = Number(target?.targetQty) || 0
-  const submit = (form) =>
-    onSubmit({
-      targetId: target.id,
-      requestedQty: Number(form.requestedQty),
-      message: form.message?.trim() || '',
-    })
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Request a Higher Target"
-      description={
-        target
-          ? `${target.product || 'Product'} · ${target.branchName || 'your branch'} — current target ${current} ${target.unit || 'units'}.`
-          : ''
-      }
-      size="md"
-      footer={
-        <>
-          <Button variant="outline" type="button" leftIcon={<FiX />} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" form="target-request-form" leftIcon={<FiSend />}>
-            Send Request
-          </Button>
-        </>
-      }
-    >
-      <form id="target-request-form" onSubmit={handleSubmit(submit)} className="space-y-4">
-        <Input
-          label="Requested Target"
-          type="number"
-          min={current + 1}
-          placeholder={`More than ${current}`}
-          error={errors.requestedQty?.message}
-          {...register('requestedQty', {
-            required: 'Enter the target you want',
-            min: { value: current + 1, message: `Must be greater than the current target (${current})` },
-          })}
-        />
-        <Textarea
-          label="Message to Admin"
-          rows={3}
-          placeholder="e.g. Our branch can achieve more than the assigned target. Please increase it."
-          {...register('message')}
-        />
-      </form>
-    </Modal>
   )
 }

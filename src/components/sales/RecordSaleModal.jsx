@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useDispatch, useSelector } from 'react-redux'
 import { FiSave, FiX, FiArrowDown } from 'react-icons/fi'
@@ -14,6 +14,7 @@ import { selectActiveProducts } from '@/redux/slices/productSlice'
 import { selectBranches } from '@/redux/slices/branchSlice'
 import { selectStaff } from '@/redux/slices/staffSlice'
 import { selectUser, selectRoleKey } from '@/redux/slices/authSlice'
+import { flashTargetsApi } from '@/services/crm'
 import { useToast } from '@/hooks/useToast'
 import { formatCurrency } from '@/utils/format'
 import { cn } from '@/utils/cn'
@@ -56,6 +57,19 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
   // A staff user can only record sales for themselves in their own branch.
   const isStaff = roleKey === 'staff'
 
+  // Flash targets a staff member is allocated to (lets them link a sale to one).
+  const [flashOptions, setFlashOptions] = useState([])
+  useEffect(() => {
+    if (open && isStaff) {
+      flashTargetsApi
+        .activeForStaff()
+        .then(({ data }) => setFlashOptions(data || []))
+        .catch(() => setFlashOptions([]))
+    } else {
+      setFlashOptions([])
+    }
+  }, [open, isStaff])
+
   const productById = (pid) => activeProducts.find((p) => p.id === pid) || null
 
   const categories = useMemo(
@@ -83,6 +97,7 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
       paymentStatus: 'Paid',
       paymentMethod: 'Cash',
       remarks: '',
+      flashTargetId: '',
     }
   }
 
@@ -143,6 +158,7 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
       paymentMethod: form.paymentMethod,
       branchId: form.branch,
       staffId: form.staff || null,
+      flashTargetId: form.flashTargetId || null,
       ...(lead?.id ? { leadId: lead.id } : {}),
     }
 
@@ -204,6 +220,17 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
         <Input label="Sale Date" type="date" {...register('saleDate', { required: true })} />
         <Select label="Payment Status" options={PAYMENT_STATUSES} {...register('paymentStatus')} />
         <Select label="Payment Method" options={PAYMENT_METHODS} {...register('paymentMethod')} />
+        {isStaff && flashOptions.length > 0 && (
+          <Select
+            label="Flash Target (optional)"
+            options={[
+              { value: '', label: 'Not part of a flash target' },
+              ...flashOptions.map((f) => ({ value: f.id, label: `${f.product || 'Flash'} — target ${f.qty}` })),
+            ]}
+            hint="Link this sale to count toward a flash target"
+            {...register('flashTargetId')}
+          />
+        )}
         <div className="sm:col-span-2">
           <Textarea label="Remarks" rows={3} placeholder="Optional notes about this sale…" {...register('remarks')} />
         </div>
