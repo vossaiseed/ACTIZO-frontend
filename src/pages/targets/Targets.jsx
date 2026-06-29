@@ -17,6 +17,7 @@ import {
   FiLayers,
   FiShare2,
   FiTrash2,
+  FiShoppingBag,
 } from 'react-icons/fi'
 
 import {
@@ -712,6 +713,22 @@ function useColumns(tab, opts = {}) {
           render: (r) => (
             <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
               {(Number(r.achievedQty) || 0).toLocaleString()}
+            </span>
+          ),
+        },
+        {
+          // Count of completed sales recorded against this target (live).
+          key: 'salesCount',
+          header: 'Sales',
+          sortable: true,
+          align: 'right',
+          render: (r) => (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-surface-muted/70 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-ink-soft dark:bg-slate-800/60 dark:text-slate-300"
+              title={`${Number(r.salesCount) || 0} completed sale${(Number(r.salesCount) || 0) === 1 ? '' : 's'} against this target`}
+            >
+              <FiShoppingBag className="h-3 w-3" />
+              {Number(r.salesCount) || 0}
             </span>
           ),
         },
