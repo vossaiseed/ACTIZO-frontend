@@ -57,17 +57,16 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
   // A staff user can only record sales for themselves in their own branch.
   const isStaff = roleKey === 'staff'
 
-  // Flash targets a staff member is allocated to (lets them link a sale to one).
-  const [flashOptions, setFlashOptions] = useState([])
+  // Flash campaigns this sale can be linked to. Staff → only targets assigned to them;
+  // Admin/Manager → any active campaign. Filtered to the selected product below.
+  const [flashTargets, setFlashTargets] = useState([])
   useEffect(() => {
-    if (open && isStaff) {
-      flashTargetsApi
-        .activeForStaff()
-        .then(({ data }) => setFlashOptions(data || []))
-        .catch(() => setFlashOptions([]))
-    } else {
-      setFlashOptions([])
+    if (!open) {
+      setFlashTargets([])
+      return
     }
+    const req = isStaff ? flashTargetsApi.activeForStaff() : flashTargetsApi.active()
+    req.then(({ data }) => setFlashTargets(data || [])).catch(() => setFlashTargets([]))
   }, [open, isStaff])
 
   const productById = (pid) => activeProducts.find((p) => p.id === pid) || null
@@ -112,10 +111,17 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
 
   const branchVal = watch('branch')
   const categoryVal = watch('category')
+  const productVal = watch('product')
   const qty = Number(watch('quantity')) || 0
   const price = Number(watch('unitPrice')) || 0
   const discount = Number(watch('discount')) || 0
   const total = qty * price
+
+  // Only flash campaigns for the product being sold can be linked.
+  const flashOptions = useMemo(
+    () => (flashTargets || []).filter((f) => !f.productId || f.productId === productVal),
+    [flashTargets, productVal],
+  )
   const finalAmount = Math.max(0, total - discount)
 
   const staffOpts = useMemo(() => {
@@ -220,14 +226,17 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
         <Input label="Sale Date" type="date" {...register('saleDate', { required: true })} />
         <Select label="Payment Status" options={PAYMENT_STATUSES} {...register('paymentStatus')} />
         <Select label="Payment Method" options={PAYMENT_METHODS} {...register('paymentMethod')} />
-        {isStaff && flashOptions.length > 0 && (
+        {flashOptions.length > 0 && (
           <Select
             label="Flash Target (optional)"
             options={[
               { value: '', label: 'Not part of a flash target' },
-              ...flashOptions.map((f) => ({ value: f.id, label: `${f.product || 'Flash'} — target ${f.qty}` })),
+              ...flashOptions.map((f) => ({
+                value: f.id,
+                label: f.qty != null ? `${f.product || 'Flash'} — your target ${f.qty}` : `${f.product || 'Flash'} campaign`,
+              })),
             ]}
-            hint="Link this sale to count toward a flash target"
+            hint="Link this sale so it counts toward the flash target"
             {...register('flashTargetId')}
           />
         )}

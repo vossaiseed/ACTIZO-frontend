@@ -34,7 +34,7 @@ const fallbackMeta = {
   tint: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
 }
 
-const POLL_MS = 60_000
+const POLL_MS = 20_000
 
 /**
  * NotificationCenter — bell + unread badge that opens a popover of live

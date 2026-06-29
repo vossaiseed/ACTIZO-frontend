@@ -627,8 +627,12 @@ function AddLeadModal({ open, onClose, lead, onCreate, onUpdate }) {
     formState: { errors, isSubmitting },
   } = useForm({ defaultValues: blank })
 
+  // Once the admin manually picks a branch, location auto-suggest must not override it.
+  const [branchTouched, setBranchTouched] = useState(false)
+
   useEffect(() => {
     if (!open) return
+    setBranchTouched(false)
     reset(
       lead
         ? {
@@ -644,12 +648,19 @@ function AddLeadModal({ open, onClose, lead, onCreate, onUpdate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lead])
 
-  // Auto-select the branch whenever the location changes.
+  // Auto-suggest a branch from the location — but only until the admin picks one manually.
   const locReg = register('location', { required: 'Location is required' })
   const onLocationChange = (e) => {
     locReg.onChange(e)
+    if (branchTouched) return
     const b = matchBranchByLocation(e.target.value)
     if (b?.id) setValue('branch', b.id)
+  }
+  // Register the branch field so we can flag manual selection.
+  const branchReg = register('branch', { required: 'Select a branch' })
+  const onBranchChange = (e) => {
+    branchReg.onChange(e)
+    setBranchTouched(true)
   }
 
   const onSubmit = (form) => {
@@ -751,11 +762,12 @@ function AddLeadModal({ open, onClose, lead, onCreate, onUpdate }) {
           onChange={onLocationChange}
         />
         <Select
-          label="Branch (auto-selected)"
+          label="Branch"
           options={branchOptions}
-          hint="Auto-filled from location — change if needed"
+          hint="Suggested from location — your selection is always kept"
           error={errors.branch?.message}
-          {...register('branch', { required: 'Select a branch' })}
+          {...branchReg}
+          onChange={onBranchChange}
         />
         <Select
           label="Product"

@@ -325,7 +325,7 @@ function CampaignCard({ campaign: c, role, branchTargets = [], staffTargets = []
                 {' · '}<StatusBadge status={mine.status} size="sm" />
               </div>
               {['Approved', 'Partially Approved'].includes(mine.status) && (
-                <Button size="sm" variant="outline" leftIcon={<FiShare2 />} onClick={onDistribute}>Distribute</Button>
+                <Button size="sm" variant="outline" leftIcon={<FiShare2 />} onClick={onDistribute}>Assign to Staff</Button>
               )}
             </div>
           )}
@@ -464,8 +464,8 @@ function DistributeModal({ campaign, branchStaff, existing, onClose, onSubmit })
     <Modal
       open={open}
       onClose={onClose}
-      title="Distribute to Staff"
-      description={campaign ? `${campaign.product || 'Product'} — approved ${approved} units for your branch.` : ''}
+      title="Assign to Staff"
+      description={campaign ? `${campaign.product || 'Product'} — approved ${approved} units for your branch. Assign quantities to one or more staff members.` : ''}
       size="lg"
       footer={
         <>
@@ -477,7 +477,7 @@ function DistributeModal({ campaign, branchStaff, existing, onClose, onSubmit })
             disabled={over}
             onClick={() => onSubmit(campaign.id, list.map((e) => ({ staffId: e.id, qty: Number(values[e.id]) || 0 })).filter((a) => a.qty > 0))}
           >
-            Save Distribution
+            Assign
           </Button>
         </>
       }

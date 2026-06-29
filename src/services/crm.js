@@ -108,6 +108,7 @@ export const targetsApi = {
 export const flashTargetsApi = {
   list: () => http.get('/flash-targets'),
   activeForStaff: () => http.get('/flash-targets/active-for-staff'),
+  active: () => http.get('/flash-targets/active'),
   create: (body) => http.post('/flash-targets', body),
   submitRequest: (id, body) => http.post(`/flash-targets/${id}/requests`, body),
   resolveRequest: (requestId, body) => http.patch(`/flash-targets/requests/${requestId}`, body),
