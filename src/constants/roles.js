@@ -1,15 +1,13 @@
 import { FiShield, FiHome, FiUser } from 'react-icons/fi'
-import { staffById } from '@/data/staff'
-import { branchById } from '@/data/branches'
 
 /**
- * PIN-based authentication config.
- * Roles: Admin, Branch Manager and Sales Staff.
+ * Role configuration for PIN-based authentication.
  *
- * Demo PINs:
- *   Admin          → 123456
- *   Branch Manager → 112233
- *   Sales Staff    → 445566
+ * The backend (`POST /auth/login`) is the SINGLE SOURCE OF TRUTH for PINs and
+ * identity. PINs are created/displayed/reset in Admin → Users and verified
+ * server-side — they are never hardcoded here. This file only supplies per-role
+ * display metadata: label, route permissions, capabilities and the post-login
+ * redirect used by the nav + route guards.
  */
 
 export const ROLE_KEYS = {
@@ -34,9 +32,6 @@ const STAFF_PERMS = [
   '/', '/leads', '/follow-ups', '/sales', '/targets', '/incentives', '/settings',
 ]
 
-const demoStaff = staffById('STF-001')
-const demoBranch = branchById('BR-01')
-
 export const ROLES = [
   {
     key: ROLE_KEYS.ADMIN,
@@ -45,7 +40,6 @@ export const ROLES = [
     description: 'Full access to every module across all branches.',
     icon: FiShield,
     color: 'brand',
-    pin: '123456',
     redirect: '/',
     permissions: ADMIN_PERMS,
     capabilities: [
@@ -56,15 +50,6 @@ export const ROLES = [
       'Finance Dashboard',
       'Reports & Analytics',
     ],
-    user: {
-      id: 'USR-ADMIN',
-      name: 'Alex Morgan',
-      email: 'admin@actizo.com',
-      avatarColor: 'from-brand-400 to-brand-600',
-      branchId: null,
-      branchName: 'Head Office',
-      staffId: null,
-    },
   },
   {
     key: ROLE_KEYS.BRANCH_MANAGER,
@@ -73,7 +58,6 @@ export const ROLES = [
     description: 'Manage your branch staff, assign leads, oversee targets & sales.',
     icon: FiHome,
     color: 'indigo',
-    pin: '112233',
     redirect: '/',
     permissions: MANAGER_PERMS,
     capabilities: [
@@ -86,15 +70,6 @@ export const ROLES = [
       'View Branch Targets',
       'View Branch Sales',
     ],
-    user: {
-      id: 'USR-BM',
-      name: demoBranch?.manager || 'Branch Manager',
-      email: 'manager@actizo.com',
-      avatarColor: 'from-indigo-400 to-indigo-600',
-      branchId: demoBranch?.id || 'BR-01',
-      branchName: demoBranch?.name || 'Kozhikode',
-      staffId: null,
-    },
   },
   {
     key: ROLE_KEYS.STAFF,
@@ -103,7 +78,6 @@ export const ROLES = [
     description: 'Work your assigned leads, follow-ups, sales & incentives.',
     icon: FiUser,
     color: 'emerald',
-    pin: '445566',
     redirect: '/',
     permissions: STAFF_PERMS,
     capabilities: [
@@ -114,24 +88,10 @@ export const ROLES = [
       'View Personal Targets',
       'View Incentives',
     ],
-    user: {
-      id: demoStaff?.id || 'STF-001',
-      name: demoStaff?.name || 'Sales Executive',
-      email: 'staff@actizo.com',
-      avatarColor: demoStaff?.avatarColor || 'from-emerald-400 to-emerald-600',
-      branchId: demoStaff?.branchId || 'BR-01',
-      branchName: demoStaff?.branchName || 'Kozhikode',
-      staffId: demoStaff?.id || 'STF-001',
-    },
   },
 ]
 
 export const roleByKey = (key) => ROLES.find((r) => r.key === key)
-
-export const validatePin = (key, pin) => {
-  const role = roleByKey(key)
-  return Boolean(role) && role.pin === String(pin)
-}
 
 // Base path of a pathname: '/leads/LD-1001' -> '/leads', '/' -> '/'
 const basePath = (pathname) => {

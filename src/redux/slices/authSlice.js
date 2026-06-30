@@ -1,32 +1,32 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import { roleByKey, validatePin } from '@/constants/roles'
+import { roleByKey } from '@/constants/roles'
 import { authApi } from '@/services/crm'
 
 /**
  * Real PIN-based authentication against the backend.
  * Flow: select role -> enter 6-digit PIN -> POST /auth/login -> store JWT + user.
  *
- * The backend returns the authoritative identity (id, branchId, role) + JWT.
- * The frontend `roles.js` config supplies the display label, capabilities,
- * permissions and post-login redirect used by the nav + route guards.
+ * The backend is the single source of truth: it verifies the PIN and returns the
+ * authoritative identity (id, name, email, branchId, branchName, role, avatar) +
+ * JWT. The frontend `roles.js` config only supplies the display label,
+ * capabilities, permissions and post-login redirect used by nav + route guards.
  */
 export const loginWithPin = createAsyncThunk(
   'auth/loginWithPin',
   async ({ roleKey, pin }, { rejectWithValue }) => {
     if (!roleKey) return rejectWithValue('Please select a role to continue.')
-    if (!validatePin(roleKey, pin)) {
-      // Cheap client-side length/format guard before hitting the network.
-    }
     try {
       const { data } = await authApi.login({ roleKey, pin })
       const role = roleByKey(roleKey)
+      const identity = data.user // authoritative backend identity
       const user = {
-        ...role?.user, // fallback display fields (avatarColor, branchName, etc.)
-        ...data.user, // authoritative backend identity (id, email, branchId, role)
-        role: role?.title || data.user.role, // display label shown across the app
+        ...identity,
+        // A staff member's account id IS their staff id (used by "my data" views).
+        staffId: identity.role === 'staff' ? identity.id : null,
+        role: role?.title || identity.role, // display label shown across the app
         roleKey,
         roleLabel: role?.label,
-        permissions: role?.permissions,
+        permissions: role?.permissions ?? identity.permissions,
         capabilities: role?.capabilities,
         redirect: role?.redirect || '/',
       }

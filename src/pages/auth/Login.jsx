@@ -11,6 +11,14 @@ import { cn } from '@/utils/cn'
 
 const PIN_LENGTH = 6
 
+// Demo "tap to fill" PINs. These map to real, active seed accounts so each chip
+// actually signs in. Update these if the corresponding account's PIN is reset.
+const DEMO_PINS = {
+  admin: '123456', // Alex Morgan (Admin)
+  branch_manager: '112233', // Arjun Menon (Branch Manager)
+  staff: '177185', // ashif staff (Sales Staff)
+}
+
 /* ---------------- Segmented 6-digit PIN input ---------------- */
 function PinInput({ value, onChange, onComplete, invalid, disabled }) {
   const refs = useRef([])
@@ -226,7 +234,7 @@ export default function Login() {
           </Button>
         </form>
 
-        {/* Demo PINs */}
+        {/* Demo PINs — tap a role to auto-fill a working PIN for that account. */}
         <div className="relative mt-6 border-t border-line pt-5 dark:border-slate-800">
           <div className="mb-2.5 flex items-center justify-center gap-2">
             <p className="text-center text-[11px] font-semibold uppercase tracking-wider text-ink-faint dark:text-slate-500">
@@ -244,23 +252,27 @@ export default function Login() {
             </button>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            {ROLES.map((role) => (
-              <button
-                type="button"
-                key={role.key}
-                onClick={() => {
-                  setRoleKey(role.key)
-                  setPin(role.pin)
-                  setError('')
-                }}
-                className="rounded-xl bg-surface-muted/70 px-2 py-2 text-center transition hover:bg-brand-50 dark:bg-slate-800/60 dark:hover:bg-slate-800"
-              >
-                <span className="block text-[10px] font-medium text-ink-soft dark:text-slate-400">{role.label}</span>
-                <span className="block font-display text-sm font-bold tracking-widest text-brand-600 dark:text-brand-300">
-                  {showPins ? role.pin : '••••••'}
-                </span>
-              </button>
-            ))}
+            {ROLES.map((role) => {
+              const demoPin = DEMO_PINS[role.key]
+              if (!demoPin) return null
+              return (
+                <button
+                  type="button"
+                  key={role.key}
+                  onClick={() => {
+                    setRoleKey(role.key)
+                    setPin(demoPin)
+                    setError('')
+                  }}
+                  className="rounded-xl bg-surface-muted/70 px-2 py-2 text-center transition hover:bg-brand-50 dark:bg-slate-800/60 dark:hover:bg-slate-800"
+                >
+                  <span className="block text-[10px] font-medium text-ink-soft dark:text-slate-400">{role.label}</span>
+                  <span className="block font-display text-sm font-bold tracking-widest text-brand-600 dark:text-brand-300">
+                    {showPins ? demoPin : '••••••'}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       </div>
