@@ -184,7 +184,7 @@ export default function Sales() {
     { key: 'staffName', label: 'Staff' },
     { key: 'quantity', label: 'Quantity' },
     { key: 'unit', label: 'Unit' },
-    { key: 'amount', label: 'Amount (AED)' },
+    { key: 'amount', label: 'Amount (₹)' },
     { key: 'date', label: 'Date' },
     { key: 'status', label: 'Status' },
     { key: 'paymentMode', label: 'Payment Mode' },

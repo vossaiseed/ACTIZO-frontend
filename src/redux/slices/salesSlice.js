@@ -114,6 +114,10 @@ const salesSlice = createSlice({
         state.topProducts = s.topProducts ?? []
         // branchSales arrives as [{ branch, revenue }] — matches charts.branchSales.
         state.charts.branchSales = s.branchSales ?? []
+        // staffSales [{ name, branch, revenue, orders }] → Top Staff panel.
+        state.staffSales = s.staffSales ?? []
+        // monthlySalesTrend [{ month, sales }] → Revenue Overview chart.
+        state.charts.monthlySalesTrend = s.monthlySalesTrend ?? []
       })
       .addCase(addSale.fulfilled, (state, action) => {
         state.items.unshift(action.payload)

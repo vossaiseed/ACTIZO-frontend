@@ -51,12 +51,12 @@ export default function AppRoutes() {
           <Route index element={<Dashboard />} />
           <Route path="/leads" element={<LeadList />} />
           <Route path="/leads/:id" element={<LeadDetails />} />
-          <Route path="/follow-ups" element={<FollowUp />} />
+          <Route path="/follow-ups" element={<RoleRoute><FollowUp /></RoleRoute>} />
           <Route path="/sales" element={<Sales />} />
-          <Route path="/products" element={<Products />} />
-          <Route path="/products/:id" element={<ProductDetails />} />
-          <Route path="/targets" element={<Targets />} />
-          <Route path="/incentives" element={<Incentives />} />
+          <Route path="/products" element={<RoleRoute><Products /></RoleRoute>} />
+          <Route path="/products/:id" element={<RoleRoute><ProductDetails /></RoleRoute>} />
+          <Route path="/targets" element={<RoleRoute><Targets /></RoleRoute>} />
+          <Route path="/incentives" element={<RoleRoute><Incentives /></RoleRoute>} />
           <Route path="/branches" element={<RoleRoute><BranchList /></RoleRoute>} />
           <Route path="/branches/:id" element={<RoleRoute><BranchDetails /></RoleRoute>} />
           <Route path="/staff" element={<RoleRoute><StaffList /></RoleRoute>} />

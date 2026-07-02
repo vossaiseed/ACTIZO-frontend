@@ -204,7 +204,7 @@ export default function Incentives() {
     { key: 'targetQty', label: 'Target (units)' },
     { key: 'achievedQty', label: 'Achieved (units)' },
     { key: 'extraQty', label: 'Extra (units)' },
-    { key: 'amount', label: 'Incentive (AED)' },
+    { key: 'amount', label: 'Incentive (₹)' },
     { key: 'status', label: 'Status' },
   ]
 

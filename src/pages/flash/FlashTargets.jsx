@@ -76,8 +76,11 @@ export default function FlashTargetsPanel() {
   const kpis = useMemo(() => {
     const active = campaigns.filter((c) => c.status === 'Active').length
     const totalQty = campaigns.reduce((s, c) => s + Number(c.totalQty || 0), 0)
+    const totalApproved = campaigns.reduce((s, c) => s + Number(c.totalApproved || 0), 0)
     const achieved = campaigns.reduce((s, c) => s + Number(c.achieved || 0), 0)
-    return { active, totalQty, achieved, completion: totalQty ? Math.round((achieved / totalQty) * 100) : 0 }
+    // Completion is measured against APPROVED quantity — same denominator as the
+    // per-campaign cards (achievement is only tracked against what was approved).
+    return { active, totalQty, achieved, completion: totalApproved ? Math.round((achieved / totalApproved) * 100) : 0 }
   }, [campaigns])
 
   /* ---- handlers ---- */

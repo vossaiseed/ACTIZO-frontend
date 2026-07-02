@@ -56,6 +56,10 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
   const roleKey = useSelector(selectRoleKey)
   // A staff user can only record sales for themselves in their own branch.
   const isStaff = roleKey === 'staff'
+  const isManager = roleKey === 'branch_manager'
+  // Branch is locked to the user's OWN branch for Managers & Staff — only an
+  // Admin may record a sale against any branch.
+  const lockBranch = isStaff || isManager
 
   // Flash campaigns this sale can be linked to. Staff → only targets assigned to them;
   // Admin/Manager → any active campaign. Filtered to the selected product below.
@@ -85,7 +89,7 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
     const prod = l ? productById(l.productId) : null
     return {
       customer: l?.customer || l?.name || '',
-      branch: l?.branchId || (isStaff ? currentUser?.branchId : branchOptions[0]?.value) || '',
+      branch: l?.branchId || (lockBranch ? currentUser?.branchId : branchOptions[0]?.value) || '',
       staff: l?.staffId || (isStaff ? currentUser?.id : '') || '',
       category: prod ? prod.category : categories[0] || '',
       product: prod ? prod.id : '',
@@ -198,20 +202,24 @@ export default function RecordSaleModal({ open, onClose, lead = null }) {
     >
       <form id="record-sale-form" onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Input label="Customer Name" error={errors.customer?.message} {...register('customer', { required: 'Customer name is required' })} />
+        {/* Branch — locked to the user's own branch for Managers & Staff; only Admin may choose. */}
+        {lockBranch ? (
+          <>
+            <ReadOnly label="Branch" value={currentUser?.branchName || '—'} />
+            <input type="hidden" {...register('branch')} />
+          </>
+        ) : (
+          <Select label="Branch" options={branchOptions} error={errors.branch?.message} {...register('branch', { required: 'Select a branch' })} />
+        )}
+        {/* Sales Staff — Staff record only for themselves; Admin/Manager pick the
+            staff who made the sale (Managers see only their own branch's staff). */}
         {isStaff ? (
           <>
-            {/* Staff sales are always bound to the logged-in user + their branch. */}
-            <ReadOnly label="Branch" value={currentUser?.branchName || '—'} />
             <ReadOnly label="Sales Staff" value={currentUser?.name || 'You'} />
-            <input type="hidden" {...register('branch')} />
             <input type="hidden" {...register('staff')} />
           </>
         ) : (
-          <>
-            <Select label="Branch" options={branchOptions} error={errors.branch?.message} {...register('branch', { required: 'Select a branch' })} />
-            {/* Required so every sale is attributed to a staff member → incentive can be credited. */}
-            <Select label="Sales Staff" options={staffOpts} error={errors.staff?.message} {...register('staff', { required: 'Select the staff member who made this sale' })} />
-          </>
+          <Select label="Sales Staff" options={staffOpts} error={errors.staff?.message} {...register('staff', { required: 'Select the staff member who made this sale' })} />
         )}
         <Select label="Product Category" options={categories.map((c) => ({ value: c, label: c }))} {...register('category')} />
         <Select label="Product Name" options={productOpts} error={errors.product?.message} {...productReg} onChange={onProduct} />

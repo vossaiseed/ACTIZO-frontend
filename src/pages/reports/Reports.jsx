@@ -94,7 +94,7 @@ const REPORT_META = {
       {
         key: 'value',
         header: 'Value',
-        label: 'Value (AED)',
+        label: 'Value (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
@@ -125,7 +125,7 @@ const REPORT_META = {
       {
         key: 'amount',
         header: 'Amount',
-        label: 'Amount (AED)',
+        label: 'Amount (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
@@ -159,7 +159,7 @@ const REPORT_META = {
       {
         key: 'revenue',
         header: 'Revenue',
-        label: 'Revenue (AED)',
+        label: 'Revenue (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
@@ -170,7 +170,7 @@ const REPORT_META = {
       {
         key: 'profit',
         header: 'Profit',
-        label: 'Profit (AED)',
+        label: 'Profit (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
@@ -204,7 +204,7 @@ const REPORT_META = {
       {
         key: 'totalRevenue',
         header: 'Revenue',
-        label: 'Total Revenue (AED)',
+        label: 'Total Revenue (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
@@ -266,7 +266,7 @@ const REPORT_META = {
       {
         key: 'revenue',
         header: 'Revenue',
-        label: 'Revenue (AED)',
+        label: 'Revenue (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-ink dark:text-slate-100">
@@ -361,7 +361,7 @@ const REPORT_META = {
       {
         key: 'total',
         header: 'Total',
-        label: 'Total Incentive (AED)',
+        label: 'Total Incentive (₹)',
         align: 'right',
         render: (r) => (
           <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">

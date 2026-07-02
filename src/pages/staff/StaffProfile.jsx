@@ -42,7 +42,7 @@ import DataTable from '@/components/data/DataTable'
 import EmptyState from '@/components/feedback/EmptyState'
 import { LineChartView } from '@/components/charts'
 
-import { achievementStyle, achievementStyleFromPct } from '@/utils/achievement'
+import { achievementStyleFromPct } from '@/utils/achievement'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -453,12 +453,11 @@ export default function StaffProfile() {
               Target Achievement
             </h3>
             <p className="text-sm text-ink-soft dark:text-slate-400">
-              Revenue against assigned target
+              Units sold against assigned target
             </p>
           </div>
           <AchievementBadge
-            achieved={revenue}
-            target={target}
+            pct={member.achievement || 0}
             size="md"
             withLabel
             className="ml-auto"
@@ -472,7 +471,7 @@ export default function StaffProfile() {
               <span
                 className={cn(
                   'font-display text-2xl font-bold',
-                  achievementStyle(revenue, target).text,
+                  achievementStyleFromPct(member.achievement || 0).text,
                 )}
               >
                 {formatPercent(member.achievement || 0, 0)}

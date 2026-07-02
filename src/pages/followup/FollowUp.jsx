@@ -22,7 +22,7 @@ import {
 
 import { cn } from '@/utils/cn'
 import { formatDate, formatShortDate, formatRelativeTime } from '@/utils/format'
-import { selectLeads, addFollowUp } from '@/redux/slices/leadSlice'
+import { selectLeads, addFollowUp, fetchLeads } from '@/redux/slices/leadSlice'
 import { followupsApi } from '@/services/crm'
 import { useToast } from '@/hooks/useToast'
 
@@ -413,6 +413,7 @@ function UpcomingItem({ fu }) {
 /* ------------------------------------------------------------------ */
 
 export default function FollowUp() {
+  const dispatch = useDispatch()
   const leads = useSelector(selectLeads)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -427,6 +428,9 @@ export default function FollowUp() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Leads power the "Add Follow-Up" lead selector — data slices aren't persisted,
+    // so fetch them on mount (otherwise the dropdown is empty on a fresh load).
+    dispatch(fetchLeads())
     let live = true
     followupsApi
       .list({ limit: 1000 })
@@ -440,7 +444,7 @@ export default function FollowUp() {
     return () => {
       live = false
     }
-  }, [])
+  }, [dispatch])
 
   /* --- flat list (already flattened + camelCased by the API) --- */
   const allFollowUps = items

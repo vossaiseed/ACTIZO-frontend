@@ -607,7 +607,7 @@ function TargetVsAchievementChart({ tab, rows }) {
       }))
   }, [tab, rows])
 
-  const valueLabel = tab === 'general' ? 'units' : 'AED 000s'
+  const valueLabel = tab === 'general' ? 'units' : '₹ 000s'
 
   return (
     <ChartCard
@@ -1069,6 +1069,18 @@ export default function Targets() {
     [rawRows, filters, activeTab],
   )
 
+  /* General targets span a Product→Branch→Staff hierarchy — the SAME sale counts
+     at every level, so summing achievedQty across all rows would multi-count.
+     Total the coarsest scope present (Product for admin, Branch for a manager,
+     else the leaf rows) so "units achieved" reflects real, non-duplicated units. */
+  const generalAchievedUnits = useMemo(() => {
+    if (activeTab !== 'general') return 0
+    const admin = rows.filter((r) => r.scope === 'Admin')
+    const branch = rows.filter((r) => r.scope === 'Branch')
+    const level = admin.length ? admin : branch.length ? branch : rows
+    return sum(level, 'achievedQty')
+  }, [rows, activeTab])
+
   const tabs = [
     { key: 'general', label: TAB_META.general.label, icon: TAB_META.general.icon, count: general.length },
     { key: 'special', label: TAB_META.special.label, icon: TAB_META.special.icon, count: special.length },
@@ -1394,7 +1406,7 @@ export default function Targets() {
               <span className="hidden items-center gap-1.5 tabular-nums sm:flex">
                 <FiBarChart2 className="h-3.5 w-3.5 text-brand-500" />
                 {activeTab === 'general'
-                  ? `${sum(rows, 'achievedQty').toLocaleString()} units achieved`
+                  ? `${generalAchievedUnits.toLocaleString()} units achieved`
                   : activeTab === 'special'
                     ? `${formatCurrency(sum(rows, 'achievedValue'), { compact: true })} achieved`
                     : `${formatCurrency(sum(rows, 'revenueAchieved'), { compact: true })} revenue`}

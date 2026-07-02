@@ -64,7 +64,7 @@ const EXPORT_COLUMNS = [
   { key: 'staffCount', label: 'Staff' },
   { key: 'totalLeads', label: 'Leads' },
   { key: 'totalSales', label: 'Sales' },
-  { key: 'monthlyRevenue', label: 'Monthly Revenue (AED)' },
+  { key: 'monthlyRevenue', label: 'Monthly Revenue (₹)' },
   { key: 'totalRevenue', label: 'Total Revenue (₹)' },
   { key: 'targetRevenue', label: 'Assigned Target (₹)' },
   { key: 'targetAchievement', label: 'Target %' },

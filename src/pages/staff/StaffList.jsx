@@ -101,10 +101,10 @@ const EXPORT_COLUMNS = [
   { key: 'assignedLeads', label: 'Assigned Leads' },
   { key: 'wonLeads', label: 'Won Leads' },
   { key: 'conversionRate', label: 'Conversion %' },
-  { key: 'revenue', label: 'Revenue (AED)' },
-  { key: 'target', label: 'Target (AED)' },
+  { key: 'revenue', label: 'Revenue (₹)' },
+  { key: 'target', label: 'Target (₹)' },
   { key: 'achievement', label: 'Achievement %' },
-  { key: 'incentiveEarned', label: 'Incentive (AED)' },
+  { key: 'incentiveEarned', label: 'Incentive (₹)' },
   { key: 'performanceScore', label: 'Performance Score' },
   { key: 'rating', label: 'Rating' },
 ]
